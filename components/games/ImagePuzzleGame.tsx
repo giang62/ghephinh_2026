@@ -9,6 +9,9 @@ type RoomView = {
   gameId: "image-puzzle";
   status: "running" | "ended";
   startedAtMs: number | null;
+  stageIndex: number;
+  stageCount: number;
+  stageStartedAtMs: number | null;
   endsAtMs: number | null;
   imageUrl: string | null;
 };
@@ -16,7 +19,7 @@ type RoomView = {
 type Props = {
   room: RoomView;
   disabled: boolean;
-  onSubmit: (result: { type: "image-puzzle"; solved: boolean; completedMs: number | null }) => void;
+  onSubmit: (result: { type: "image-puzzle"; stageIndex: number; solved: boolean; completedMs: number | null }) => void;
 };
 
 const SIZE = 120;
@@ -53,16 +56,10 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
 
   function trySubmitSolved() {
     if (sentRef.current) return;
-    if (!room.startedAtMs) return;
+    if (!room.stageStartedAtMs) return;
     sentRef.current = true;
-    const completedMs = Math.max(0, Math.round(nowServerMs() - room.startedAtMs));
-    onSubmit({ type: "image-puzzle", solved: true, completedMs });
-  }
-
-  function trySubmitTimeout() {
-    if (sentRef.current) return;
-    sentRef.current = true;
-    onSubmit({ type: "image-puzzle", solved: false, completedMs: null });
+    const completedMs = Math.max(0, Math.round(nowServerMs() - room.stageStartedAtMs));
+    onSubmit({ type: "image-puzzle", stageIndex: room.stageIndex, solved: true, completedMs });
   }
 
   useEffect(() => {
@@ -76,7 +73,6 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
   useEffect(() => {
     if (room.status === "ended" && !solved) {
       setMessage("Hết giờ!");
-      trySubmitTimeout();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [room.status]);

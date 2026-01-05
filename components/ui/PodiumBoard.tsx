@@ -3,10 +3,10 @@
 import type { PublicLeaderboardEntry } from "@/lib/roomStore";
 
 function medal(rank: number) {
-  if (rank === 1) return "🥇";
-  if (rank === 2) return "🥈";
-  if (rank === 3) return "🥉";
-  return "";
+  if (rank === 1) return "Hạng 1";
+  if (rank === 2) return "Hạng 2";
+  if (rank === 3) return "Hạng 3";
+  return "Hạng";
 }
 
 export function PodiumBoard({ entries }: { entries: PublicLeaderboardEntry[] }) {
@@ -41,10 +41,10 @@ export function PodiumBoard({ entries }: { entries: PublicLeaderboardEntry[] }) 
         }}
       >
         <div className="row" style={{ justifyContent: "space-between", alignItems: "flex-start" }}>
-          <div className="grid" style={{ gap: 6 }}>
-            <div className="pill mono" style={{ width: "fit-content" }}>
-              {medal(e.rank ?? 0)} #{e.rank}
-            </div>
+            <div className="grid" style={{ gap: 6 }}>
+              <div className="pill mono" style={{ width: "fit-content" }}>
+              {medal(e.rank ?? 0)} · #{e.rank}
+              </div>
             <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em" }}>{e.name}</div>
             <div className="subtitle">{e.submitted ? "Đã nộp" : "Chưa nộp"}</div>
           </div>
@@ -85,4 +85,3 @@ export function PodiumBoard({ entries }: { entries: PublicLeaderboardEntry[] }) 
     </div>
   );
 }
-

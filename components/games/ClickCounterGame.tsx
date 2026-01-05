@@ -15,7 +15,7 @@ type RoomView = {
 type Props = {
   room: RoomView;
   disabled: boolean;
-  onSubmit: (result: { type: "click-counter"; score: number }) => void;
+  onSubmit: (result: { type: "click-counter"; stageIndex: number; score: number }) => void;
 };
 
 export function ClickCounterGame({ room, onSubmit, disabled }: Props) {
@@ -37,16 +37,25 @@ export function ClickCounterGame({ room, onSubmit, disabled }: Props) {
     if (sentRef.current) return;
     sentRef.current = true;
     setBurst((b) => b + 1);
-    onSubmit({ type: "click-counter", score });
+    onSubmit({ type: "click-counter", stageIndex: 0, score });
   }
 
   useEffect(() => {
-    if (room.status === "ended") {
+    if (!room.endsAtMs) return;
+    if (disabled) return;
+    const remaining = room.endsAtMs - nowServerMs();
+    if (remaining <= 0) {
       setMessage("Hết giờ!");
       trySubmit();
+      return;
     }
+    const id = window.setTimeout(() => {
+      setMessage("Hết giờ!");
+      trySubmit();
+    }, remaining);
+    return () => window.clearTimeout(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [room.status]);
+  }, [room.endsAtMs, disabled]);
 
   function onClick() {
     if (disabled) return;

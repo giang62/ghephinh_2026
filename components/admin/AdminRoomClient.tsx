@@ -18,6 +18,9 @@ type AdminRoomView = {
   status: "lobby" | "running" | "ended";
   durationSec: number;
   startedAtMs: number | null;
+  stageIndex: number;
+  stageCount: number;
+  stageStartedAtMs: number | null;
   endsAtMs: number | null;
   remainingMs: number;
   imageUrl: string | null;
@@ -33,6 +36,7 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
   const [imageUrl, setImageUrl] = useState<string>("/puzzles/puzzle1.png");
   const [busy, setBusy] = useState(false);
   const { toasts, push } = useToasts();
+  const [finalEntries, setFinalEntries] = useState<PublicLeaderboardEntry[] | null>(null);
 
   useEffect(() => {
     const stored = localStorage.getItem(`admin:${roomId}`) ?? "";
@@ -63,9 +67,10 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
       }
       prevPlayerIds = nextPlayerIds;
 
-      const nextResultIds = new Set(next.results.map((r) => r.playerId));
+      const nextResultIds = new Set(next.results.map((r) => `${r.playerId}:${r.result.stageIndex}`));
       for (const r of next.results) {
-        if (!prevResultIds.has(r.playerId)) {
+        const key = `${r.playerId}:${r.result.stageIndex}`;
+        if (!prevResultIds.has(key)) {
           push({ title: "Có người vừa nộp kết quả", body: r.name, tone: "good", ttlMs: 2400 });
         }
       }
@@ -79,6 +84,24 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
       clearInterval(id);
     };
   }, [adminKey, roomId]);
+
+  useEffect(() => {
+    if (!view) return;
+    if (view.status !== "ended") {
+      setFinalEntries(null);
+      return;
+    }
+    let cancelled = false;
+    fetchJson<{ entries: PublicLeaderboardEntry[] }>(`/api/rooms/${roomId}/leaderboard`)
+      .then((res) => {
+        if (cancelled) return;
+        setFinalEntries(res.entries);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [roomId, view?.status]);
 
   const joinUrl = useMemo(() => {
     if (typeof window === "undefined") return "";
@@ -153,29 +176,9 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
     }
   }
 
-  const sortedBoard = useMemo(() => {
-    if (!view) return [];
-    const byPlayer = new Map(view.results.map((r) => [r.playerId, r]));
-    const rows = view.players.map((p) => ({ player: p, result: byPlayer.get(p.playerId) ?? null }));
-
-    if (view.gameId === "click-counter") {
-      return rows.sort((a, b) => {
-        const as = a.result?.result.type === "click-counter" ? a.result.result.score : -1;
-        const bs = b.result?.result.type === "click-counter" ? b.result.result.score : -1;
-        return bs - as;
-      });
-    }
-
-    return rows.sort((a, b) => {
-      const ar = a.result?.result.type === "image-puzzle" ? a.result.result : null;
-      const br = b.result?.result.type === "image-puzzle" ? b.result.result : null;
-      const as = ar?.solved ? 1 : 0;
-      const bs = br?.solved ? 1 : 0;
-      if (bs !== as) return bs - as;
-      const at = ar?.completedMs ?? Number.POSITIVE_INFINITY;
-      const bt = br?.completedMs ?? Number.POSITIVE_INFINITY;
-      return at - bt;
-    });
+  const submittedThisStage = useMemo(() => {
+    if (!view) return 0;
+    return view.results.filter((r) => r.result.stageIndex === view.stageIndex).length;
   }, [view]);
 
   if (!adminKey) {
@@ -219,17 +222,24 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
             {view.status !== "lobby" ? (
               <HeroTimer
                 serverNowMs={view.serverNowMs}
-                startedAtMs={view.startedAtMs}
+                startedAtMs={view.stageStartedAtMs}
                 endsAtMs={view.endsAtMs}
                 durationSec={view.durationSec}
               />
+            ) : null}
+            {view.status !== "lobby" && view.gameId === "image-puzzle" ? (
+              <div className="row" style={{ justifyContent: "center" }}>
+                <span className="pill">
+                  Màn <span className="mono">{view.stageIndex + 1}</span>/<span className="mono">{view.stageCount}</span>
+                </span>
+              </div>
             ) : null}
             <div className="row" style={{ justifyContent: "space-between" }}>
               <span className="pill">
                 Người chơi <span className="mono">{view.players.length}</span>
               </span>
               <span className="pill">
-                Đã nộp <span className="mono">{view.results.length}</span>
+                Đã nộp <span className="mono">{submittedThisStage}</span>
               </span>
             </div>
           </div>
@@ -316,14 +326,14 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
             <div style={{ fontWeight: 800 }}>Đang chơi</div>
             <div className="row" style={{ justifyContent: "space-between" }}>
               <span className="pill">
-                Đã nộp <span className="mono">{view.results.length}</span>/<span className="mono">{view.players.length}</span>
+                Đã nộp <span className="mono">{submittedThisStage}</span>/<span className="mono">{view.players.length}</span>
               </span>
               <button className="btn" disabled={busy} onClick={onEnd}>
                 Kết thúc lượt chơi
               </button>
             </div>
             <div className="subtitle">
-              Lượt chơi sẽ tự kết thúc khi tất cả người chơi đã nộp kết quả hoặc khi hết giờ.
+              Màn sẽ tự chuyển khi tất cả người chơi đã nộp hoặc khi hết giờ.
             </div>
           </div>
         </section>
@@ -338,37 +348,11 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
                 Chơi lại (reset)
               </button>
             </div>
-            <PodiumBoard entries={getEntriesFromAdmin(view, sortedBoard)} />
+            {finalEntries ? <PodiumBoard entries={finalEntries} /> : <div className="subtitle">Đang tải…</div>}
             <div className="subtitle">Bấm “Chơi lại” để quay về phòng chờ và bắt đầu lượt mới.</div>
           </div>
         </section>
       ) : null}
     </>
   );
-}
-
-function getEntriesFromAdmin(
-  view: { players: { playerId: string; name: string }[]; results: PlayerResult[]; gameId: string; status: "lobby" | "running" | "ended" },
-  sortedBoard: { player: { playerId: string; name: string }; result: PlayerResult | null }[]
-) : PublicLeaderboardEntry[] {
-  // Convert existing computed order into PublicLeaderboardEntry-like objects.
-  return sortedBoard.map(({ player, result }, idx) => {
-    const submitted = Boolean(result);
-    const label =
-      view.gameId === "click-counter"
-        ? result?.result.type === "click-counter"
-          ? `${result.result.score} lần`
-          : view.status === "ended"
-            ? "Chưa nộp"
-            : "—"
-        : result?.result.type === "image-puzzle"
-          ? result.result.solved
-            ? `${Math.round((result.result.completedMs ?? 0) / 1000)}s`
-            : "Chưa xong"
-          : view.status === "ended"
-            ? "Chưa nộp"
-            : "—";
-
-    return { playerId: player.playerId, name: player.name, submitted, label, rank: idx + 1 };
-  });
 }

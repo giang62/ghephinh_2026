@@ -12,12 +12,14 @@ export type Player = {
 
 export type ImagePuzzleResult = {
   type: "image-puzzle";
+  stageIndex: number;
   solved: boolean;
   completedMs: number | null;
 };
 
 export type ClickCounterResult = {
   type: "click-counter";
+  stageIndex: number;
   score: number;
 };
 
@@ -33,7 +35,7 @@ export type PublicLeaderboardEntry = {
   name: string;
   submitted: boolean;
   label: string;
-  rank: number | null;
+  rank: number;
 };
 
 export type Room = {
@@ -44,8 +46,12 @@ export type Room = {
   createdAtMs: number;
   durationSec: number;
   startedAtMs: number | null;
+  stageIndex: number;
+  stageCount: number;
+  stageStartedAtMs: number | null;
   endsAtMs: number | null;
   imageUrl: string | null;
+  stageImages: string[];
   players: Player[];
   results: PlayerResult[];
 };
@@ -57,6 +63,8 @@ function nowMs() {
 const DEFAULT_DURATION_SEC = 60;
 const DEFAULT_PUZZLE_IMAGE = "/puzzles/puzzle1.png";
 const ROOM_TTL_SEC = 6 * 60 * 60;
+const IMAGE_PUZZLE_STAGE_COUNT = 2;
+const IMAGE_POOL = ["/puzzles/puzzle1.png", "/puzzles/puzzle2.png"] as const;
 
 function isRedisUrlConfigured() {
   return Boolean(process.env.REDIS_URL);
@@ -100,7 +108,6 @@ let kvPromise: Promise<any> | null = null;
 async function getUpstashRestKv() {
   if (!isUpstashRestConfigured()) return null;
 
-  // @vercel/kv expects KV_* env vars; map from Upstash vars if needed.
   if (!process.env.KV_REST_API_URL && process.env.UPSTASH_REDIS_REST_URL) {
     process.env.KV_REST_API_URL = process.env.UPSTASH_REDIS_REST_URL;
   }
@@ -174,22 +181,72 @@ async function saveRoom(room: Room): Promise<void> {
   getMemoryStore().rooms.set(room.roomId, room);
 }
 
-function maybeEndRoom(room: Room) {
+function isImagePuzzle(room: Room) {
+  return room.gameId === "image-puzzle";
+}
+
+function startStage(room: Room, stageIndex: number, atMs: number) {
+  room.stageIndex = stageIndex;
+  room.stageStartedAtMs = atMs;
+  room.endsAtMs = atMs + room.durationSec * 1000;
+}
+
+function endRoomNow(room: Room, atMs: number) {
+  room.status = "ended";
+  room.endsAtMs = atMs;
+}
+
+function advanceStage(room: Room, atMs: number) {
+  if (!isImagePuzzle(room)) {
+    endRoomNow(room, atMs);
+    return;
+  }
+  const nextStage = room.stageIndex + 1;
+  if (nextStage >= room.stageCount) {
+    endRoomNow(room, atMs);
+    return;
+  }
+  startStage(room, nextStage, atMs);
+}
+
+function stageSubmissions(room: Room, stageIndex: number) {
+  const keys = new Set<string>();
+  for (const r of room.results) {
+    const idx = r.result.stageIndex;
+    if (idx === stageIndex) keys.add(`${r.playerId}:${idx}`);
+  }
+  return keys.size;
+}
+
+function maybeAdvanceImagePuzzle(room: Room) {
+  if (!isImagePuzzle(room)) return false;
+  if (room.status !== "running") return false;
+  if (!room.stageStartedAtMs || !room.endsAtMs) return false;
+  const atMs = nowMs();
+
+  if (atMs >= room.endsAtMs) {
+    advanceStage(room, atMs);
+    return true;
+  }
+
+  if (room.players.length && stageSubmissions(room, room.stageIndex) >= room.players.length) {
+    advanceStage(room, atMs);
+    return true;
+  }
+
+  return false;
+}
+
+function maybeEndClickCounter(room: Room) {
+  if (room.gameId !== "click-counter") return false;
   if (room.status !== "running") return false;
   if (!room.endsAtMs) return false;
   if (nowMs() >= room.endsAtMs) {
     room.status = "ended";
     return true;
   }
-  return false;
-}
-
-function maybeAutoEndIfAllSubmitted(room: Room) {
-  if (room.status !== "running") return false;
-  if (!room.players.length) return false;
-  if (room.results.length >= room.players.length) {
-    room.status = "ended";
-    room.endsAtMs = nowMs();
+  if (room.players.length && stageSubmissions(room, 0) >= room.players.length) {
+    endRoomNow(room, nowMs());
     return true;
   }
   return false;
@@ -204,15 +261,18 @@ function sanitizeName(name: string) {
   return name.trim().replace(/\s+/g, " ").slice(0, 24);
 }
 
-export async function createRoom(args: {
-  gameId: GameId;
-  durationSec?: number;
-  imageUrl?: string | null;
-}) {
+function computeStageImages(first: string | null) {
+  const firstImg = (first && IMAGE_POOL.includes(first as any) ? first : DEFAULT_PUZZLE_IMAGE) as string;
+  const secondImg = IMAGE_POOL.find((x) => x !== firstImg) ?? "/puzzles/puzzle2.png";
+  return [firstImg, secondImg];
+}
+
+export async function createRoom(args: { gameId: GameId; durationSec?: number; imageUrl?: string | null }) {
   assertPersistentStoreIfOnVercel();
   const roomId = randomId(6);
   const adminKey = randomId(12);
   const durationSec = clampDuration(args.durationSec ?? DEFAULT_DURATION_SEC);
+  const stageCount = args.gameId === "image-puzzle" ? IMAGE_PUZZLE_STAGE_COUNT : 1;
 
   const room: Room = {
     roomId,
@@ -222,8 +282,12 @@ export async function createRoom(args: {
     createdAtMs: nowMs(),
     durationSec,
     startedAtMs: null,
+    stageIndex: 0,
+    stageCount,
+    stageStartedAtMs: null,
     endsAtMs: null,
     imageUrl: args.gameId === "image-puzzle" ? (args.imageUrl ?? DEFAULT_PUZZLE_IMAGE) : null,
+    stageImages: args.gameId === "image-puzzle" ? computeStageImages(args.imageUrl ?? null) : [],
     players: [],
     results: []
   };
@@ -235,7 +299,12 @@ export async function createRoom(args: {
 export async function getRoom(roomId: string): Promise<Room | null> {
   const room = await loadRoom(roomId);
   if (!room) return null;
-  if (maybeEndRoom(room)) await saveRoom(room);
+
+  let changed = false;
+  if (maybeAdvanceImagePuzzle(room)) changed = true;
+  if (maybeEndClickCounter(room)) changed = true;
+  if (changed) await saveRoom(room);
+
   return room;
 }
 
@@ -266,6 +335,7 @@ export async function adminConfigureRoom(args: {
   if (typeof args.durationSec === "number") room.durationSec = clampDuration(args.durationSec);
   if (room.gameId === "image-puzzle" && typeof args.imageUrl !== "undefined") {
     room.imageUrl = args.imageUrl ?? DEFAULT_PUZZLE_IMAGE;
+    room.stageImages = computeStageImages(room.imageUrl);
   }
 
   await saveRoom(room);
@@ -279,8 +349,16 @@ export async function adminStartRoom(args: { roomId: string; adminKey: string })
 
   room.status = "running";
   room.startedAtMs = nowMs();
-  room.endsAtMs = room.startedAtMs + room.durationSec * 1000;
   room.results = [];
+
+  if (isImagePuzzle(room)) {
+    room.stageCount = IMAGE_PUZZLE_STAGE_COUNT;
+    room.stageImages = computeStageImages(room.imageUrl);
+  } else {
+    room.stageCount = 1;
+  }
+
+  startStage(room, 0, room.startedAtMs);
   await saveRoom(room);
   return room;
 }
@@ -288,7 +366,6 @@ export async function adminStartRoom(args: { roomId: string; adminKey: string })
 export async function joinRoom(args: { roomId: string; name: string }) {
   assertPersistentStoreIfOnVercel();
   const room = await assertRoom(args.roomId);
-  if (maybeEndRoom(room)) await saveRoom(room);
   if (room.status !== "lobby") throw new Error("Phòng đã bắt đầu");
 
   const name = sanitizeName(args.name);
@@ -303,6 +380,26 @@ export async function joinRoom(args: { roomId: string; name: string }) {
   return { room, playerId, token };
 }
 
+function normalizeResult(room: Room, result: ImagePuzzleResult | ClickCounterResult): ImagePuzzleResult | ClickCounterResult {
+  if (room.gameId === "image-puzzle") {
+    if (result.type !== "image-puzzle") throw new Error("Kết quả không hợp lệ");
+    const stageIndex = Number(result.stageIndex);
+    if (!Number.isFinite(stageIndex) || stageIndex < 0 || stageIndex >= room.stageCount) throw new Error("Sai màn chơi");
+    const solved = Boolean(result.solved);
+    const completedMs =
+      solved && Number.isFinite(result.completedMs) ? Math.max(0, Math.round(result.completedMs ?? 0)) : null;
+    return { type: "image-puzzle", stageIndex, solved, completedMs };
+  }
+
+  if (room.gameId === "click-counter") {
+    if (result.type !== "click-counter") throw new Error("Kết quả không hợp lệ");
+    const score = Number.isFinite(result.score) ? Math.max(0, Math.round(result.score)) : 0;
+    return { type: "click-counter", stageIndex: 0, score };
+  }
+
+  throw new Error("Game không hợp lệ");
+}
+
 export async function submitResult(args: {
   roomId: string;
   playerId: string;
@@ -311,15 +408,15 @@ export async function submitResult(args: {
 }) {
   assertPersistentStoreIfOnVercel();
   const room = await assertRoom(args.roomId);
-  if (maybeEndRoom(room)) await saveRoom(room);
 
   const player = room.players.find((p) => p.playerId === args.playerId) ?? null;
   if (!player) throw new Error("Không tìm thấy người chơi");
   if (player.token !== args.token) throw new Error("Không có quyền");
+  if (room.status !== "running") throw new Error("Game chưa bắt đầu hoặc đã kết thúc");
 
-  if (room.status === "lobby") throw new Error("Game chưa bắt đầu");
+  const normalized = normalizeResult(room, args.result);
+  if (normalized.stageIndex !== room.stageIndex) throw new Error("Đã qua màn này");
 
-  const normalized = normalizeResult(room.gameId, args.result);
   const record: PlayerResult = {
     playerId: player.playerId,
     name: player.name,
@@ -327,37 +424,24 @@ export async function submitResult(args: {
     result: normalized
   };
 
-  const idx = room.results.findIndex((r) => r.playerId === player.playerId);
+  const idx = room.results.findIndex((r) => r.playerId === player.playerId && r.result.stageIndex === normalized.stageIndex);
   if (idx >= 0) room.results[idx] = record;
   else room.results.push(record);
 
-  maybeAutoEndIfAllSubmitted(room);
+  const advanced = maybeAdvanceImagePuzzle(room) || maybeEndClickCounter(room);
+  if (advanced) {
+    // stage/room updated
+  }
+
   await saveRoom(room);
   return room;
-}
-
-function normalizeResult(
-  roomGameId: GameId,
-  result: ImagePuzzleResult | ClickCounterResult
-): ImagePuzzleResult | ClickCounterResult {
-  if (roomGameId === "image-puzzle") {
-    if (result.type !== "image-puzzle") throw new Error("Kết quả không hợp lệ");
-    const solved = Boolean(result.solved);
-    const completedMs =
-      solved && Number.isFinite(result.completedMs) ? Math.max(0, Math.round(result.completedMs ?? 0)) : null;
-    return { type: "image-puzzle", solved, completedMs };
-  }
-  if (roomGameId === "click-counter") {
-    if (result.type !== "click-counter") throw new Error("Kết quả không hợp lệ");
-    const score = Number.isFinite(result.score) ? Math.max(0, Math.round(result.score)) : 0;
-    return { type: "click-counter", score };
-  }
-  throw new Error("Game không hợp lệ");
 }
 
 export function getRoomSnapshot(room: Room) {
   const now = nowMs();
   const remainingMs = room.status === "running" && room.endsAtMs ? Math.max(0, room.endsAtMs - now) : 0;
+  const currentImage =
+    room.gameId === "image-puzzle" && room.status !== "lobby" ? room.stageImages[room.stageIndex] ?? null : null;
 
   return {
     roomId: room.roomId,
@@ -365,9 +449,12 @@ export function getRoomSnapshot(room: Room) {
     status: room.status,
     durationSec: room.durationSec,
     startedAtMs: room.startedAtMs,
+    stageIndex: room.stageIndex,
+    stageCount: room.stageCount,
+    stageStartedAtMs: room.stageStartedAtMs,
     endsAtMs: room.endsAtMs,
     remainingMs,
-    imageUrl: room.imageUrl
+    imageUrl: currentImage
   };
 }
 
@@ -389,48 +476,63 @@ export function parseGameId(value: unknown): GameId {
 
 export function getPublicLeaderboard(room: Room) {
   const snapshot = getRoomSnapshot(room);
-  if (room.status === "lobby") {
-    return { ...snapshot, entries: [] as PublicLeaderboardEntry[] };
+  if (room.status === "lobby") return { ...snapshot, entries: [] as PublicLeaderboardEntry[] };
+
+  if (room.gameId === "click-counter") {
+    const byPlayer = new Map<string, ClickCounterResult>();
+    for (const r of room.results) {
+      if (r.result.type === "click-counter") byPlayer.set(r.playerId, r.result);
+    }
+    const rows = room.players.map((p) => ({ playerId: p.playerId, name: p.name, result: byPlayer.get(p.playerId) ?? null }));
+    rows.sort((a, b) => (b.result?.score ?? -1) - (a.result?.score ?? -1));
+    const entries = rows.map((row, idx) => ({
+      playerId: row.playerId,
+      name: row.name,
+      submitted: Boolean(row.result),
+      label: row.result ? `${row.result.score} lần` : snapshot.status === "ended" ? "Chưa nộp" : "—",
+      rank: idx + 1
+    }));
+    return { ...snapshot, entries };
   }
 
-  const resultsByPlayer = new Map(room.results.map((r) => [r.playerId, r.result]));
-  const rows = room.players.map((p) => ({ playerId: p.playerId, name: p.name, result: resultsByPlayer.get(p.playerId) ?? null }));
+  const stageCount = room.stageCount || IMAGE_PUZZLE_STAGE_COUNT;
+  const stageByPlayer = new Map<string, Map<number, ImagePuzzleResult>>();
+  for (const r of room.results) {
+    if (r.result.type !== "image-puzzle") continue;
+    const map = stageByPlayer.get(r.playerId) ?? new Map<number, ImagePuzzleResult>();
+    map.set(r.result.stageIndex, r.result);
+    stageByPlayer.set(r.playerId, map);
+  }
 
-  const sorted =
-    room.gameId === "click-counter"
-      ? rows.sort((a, b) => {
-          const as = a.result?.type === "click-counter" ? a.result.score : -1;
-          const bs = b.result?.type === "click-counter" ? b.result.score : -1;
-          return bs - as;
-        })
-      : rows.sort((a, b) => {
-          const as = a.result?.type === "image-puzzle" && a.result.solved ? 1 : 0;
-          const bs = b.result?.type === "image-puzzle" && b.result.solved ? 1 : 0;
-          if (bs !== as) return bs - as;
-          const at = a.result?.type === "image-puzzle" ? a.result.completedMs ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
-          const bt = b.result?.type === "image-puzzle" ? b.result.completedMs ?? Number.POSITIVE_INFINITY : Number.POSITIVE_INFINITY;
-          return at - bt;
-        });
+  const rows = room.players.map((p) => {
+    const stages = stageByPlayer.get(p.playerId) ?? new Map<number, ImagePuzzleResult>();
+    let solvedCount = 0;
+    let totalMs = 0;
+    let submittedAny = false;
+    for (let i = 0; i < stageCount; i++) {
+      const r = stages.get(i) ?? null;
+      if (r) submittedAny = true;
+      if (r?.solved && typeof r.completedMs === "number") {
+        solvedCount += 1;
+        totalMs += r.completedMs;
+      }
+    }
+    return { playerId: p.playerId, name: p.name, solvedCount, totalMs, submittedAny };
+  });
 
-  const entries: PublicLeaderboardEntry[] = sorted.map((row, idx) => {
-    const submitted = Boolean(row.result);
+  rows.sort((a, b) => {
+    if (b.solvedCount !== a.solvedCount) return b.solvedCount - a.solvedCount;
+    return a.totalMs - b.totalMs;
+  });
+
+  const entries = rows.map((row, idx) => {
     const label =
-      room.gameId === "click-counter"
-        ? row.result?.type === "click-counter"
-          ? `${row.result.score} lần`
-          : snapshot.status === "ended"
-            ? "Chưa nộp"
-            : "—"
-        : row.result?.type === "image-puzzle"
-          ? row.result.solved
-            ? `${Math.round((row.result.completedMs ?? 0) / 1000)}s`
-            : "Chưa xong"
-          : snapshot.status === "ended"
-            ? "Chưa nộp"
-            : "—";
-
-    const rank = idx + 1;
-    return { playerId: row.playerId, name: row.name, submitted, label, rank };
+      row.solvedCount === 0
+        ? `0/${stageCount}`
+        : row.solvedCount === stageCount
+          ? `${stageCount}/${stageCount} · ${Math.round(row.totalMs / 1000)}s`
+          : `${row.solvedCount}/${stageCount} · ${Math.round(row.totalMs / 1000)}s`;
+    return { playerId: row.playerId, name: row.name, submitted: row.submittedAny, label, rank: idx + 1 };
   });
 
   return { ...snapshot, entries };
@@ -440,8 +542,7 @@ export async function adminEndRoom(args: { roomId: string; adminKey: string }) {
   const room = await assertRoom(args.roomId);
   assertAdmin(room, args.adminKey);
   if (room.status !== "running") throw new Error("Phòng chưa bắt đầu");
-  room.status = "ended";
-  room.endsAtMs = nowMs();
+  endRoomNow(room, nowMs());
   await saveRoom(room);
   return room;
 }
@@ -451,8 +552,12 @@ export async function adminRestartRoom(args: { roomId: string; adminKey: string 
   assertAdmin(room, args.adminKey);
   room.status = "lobby";
   room.startedAtMs = null;
+  room.stageIndex = 0;
+  room.stageCount = room.gameId === "image-puzzle" ? IMAGE_PUZZLE_STAGE_COUNT : 1;
+  room.stageStartedAtMs = null;
   room.endsAtMs = null;
   room.results = [];
   await saveRoom(room);
   return room;
 }
+
