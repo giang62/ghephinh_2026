@@ -19,6 +19,9 @@ type PublicRoomView = {
   status: "lobby" | "running" | "ended";
   durationSec: number;
   startedAtMs: number | null;
+  stageIndex: number;
+  stageCount: number;
+  stageStartedAtMs: number | null;
   endsAtMs: number | null;
   remainingMs: number;
   imageUrl: string | null;
@@ -33,6 +36,9 @@ type LeaderboardResponse = {
   status: "lobby" | "running" | "ended";
   durationSec: number;
   startedAtMs: number | null;
+  stageIndex: number;
+  stageCount: number;
+  stageStartedAtMs: number | null;
   endsAtMs: number | null;
   entries: PublicLeaderboardEntry[];
 };
@@ -55,7 +61,7 @@ export default function PlayRoomPage() {
 
   const [view, setView] = useState<PublicRoomView | null>(null);
   const [error, setError] = useState("");
-  const [submitted, setSubmitted] = useState(false);
+  const [submittedStages, setSubmittedStages] = useState<number[]>([]);
   const [submitError, setSubmitError] = useState("");
   const { toasts, push } = useToasts();
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
@@ -119,20 +125,30 @@ export default function PlayRoomPage() {
     };
   }, [player?.playerId, push, roomId, view?.status]);
 
-  async function submitResult(result: unknown) {
+  useEffect(() => {
+    if (!view?.startedAtMs) return;
+    setSubmittedStages([]);
+  }, [view?.startedAtMs]);
+
+  async function submitResult(result: { type: string; stageIndex: number; [k: string]: unknown }) {
     if (!player) return;
-    if (submitted) return;
+    if (submittedStages.includes(result.stageIndex)) return;
     setSubmitError("");
     try {
       await fetchJson(`/api/rooms/${roomId}/result`, {
         method: "POST",
         body: JSON.stringify({ playerId: player.playerId, token: player.token, result })
       });
-      setSubmitted(true);
+      setSubmittedStages((prev) => (prev.includes(result.stageIndex) ? prev : [...prev, result.stageIndex]));
       push({ title: "Đã nộp kết quả", tone: "good", ttlMs: 2400 });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
-      push({ title: "Nộp kết quả thất bại", body: e instanceof Error ? e.message : String(e), tone: "bad", ttlMs: 2800 });
+      push({
+        title: "Nộp kết quả thất bại",
+        body: e instanceof Error ? e.message : String(e),
+        tone: "bad",
+        ttlMs: 2800
+      });
     }
   }
 
@@ -200,10 +216,18 @@ export default function PlayRoomPage() {
             {view ? (
               <HeroTimer
                 serverNowMs={view.serverNowMs}
-                startedAtMs={view.startedAtMs}
+                startedAtMs={view.stageStartedAtMs}
                 endsAtMs={view.endsAtMs}
                 durationSec={view.durationSec}
               />
+            ) : null}
+
+            {view?.status === "running" && view.gameId === "image-puzzle" ? (
+              <div className="row" style={{ justifyContent: "center" }}>
+                <span className="pill">
+                  Màn <span className="mono">{view.stageIndex + 1}</span>/<span className="mono">{view.stageCount}</span>
+                </span>
+              </div>
             ) : null}
 
             {!view || view.status === "lobby" ? (
@@ -219,26 +243,26 @@ export default function PlayRoomPage() {
               </div>
             ) : view.gameId === "image-puzzle" ? (
               <ImagePuzzleGame
-                key={`image-puzzle:${view.startedAtMs ?? "na"}`}
+                key={`image-puzzle:${view.startedAtMs ?? "na"}:${view.stageIndex}`}
                 room={view as PublicRoomView & { gameId: "image-puzzle"; status: "running" | "ended" }}
                 onSubmit={submitResult}
-                disabled={view.status !== "running" || submitted}
+                disabled={view.status !== "running" || submittedStages.includes(view.stageIndex)}
               />
             ) : (
               <ClickCounterGame
                 key={`click-counter:${view.startedAtMs ?? "na"}`}
                 room={view as PublicRoomView & { gameId: "click-counter"; status: "running" | "ended" }}
                 onSubmit={submitResult}
-                disabled={view.status !== "running" || submitted}
+                disabled={view.status !== "running" || submittedStages.includes(0)}
               />
             )}
 
-            {view?.status === "running" && submitted ? (
+            {view?.status === "running" && view && submittedStages.includes(view.stageIndex) ? (
               <div className="overlay">
                 <div className="overlayCard">
                   <h3 className="bigTitle">Bạn đã nộp!</h3>
                   <div className="subtitle" style={{ marginTop: 6 }}>
-                    Đang chờ người chơi khác… (game sẽ tự kết thúc khi mọi người hoàn thành hoặc hết giờ)
+                    Đang chờ chuyển màn / chờ người chơi khác… (hết giờ sẽ tự chuyển)
                   </div>
                 </div>
               </div>
@@ -258,7 +282,7 @@ export default function PlayRoomPage() {
               </div>
               <PodiumBoard entries={leaderboard.entries} />
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <span className="subtitle">{submitted ? "Bạn đã nộp kết quả." : "Bạn chưa nộp kết quả."}</span>
+                <span className="subtitle">{submittedStages.length ? "Bạn đã nộp kết quả." : "Bạn chưa nộp kết quả."}</span>
                 <Link className="btn" href="/">
                   Chơi game khác
                 </Link>
