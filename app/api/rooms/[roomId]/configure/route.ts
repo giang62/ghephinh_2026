@@ -9,7 +9,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
     const durationSec = typeof body.durationSec === "number" ? body.durationSec : undefined;
     const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl : undefined;
 
-    const room = adminConfigureRoom({ roomId, adminKey, durationSec, imageUrl });
+    const room = await adminConfigureRoom({ roomId, adminKey, durationSec, imageUrl });
     return NextResponse.json({ room: getRoomSnapshot(room) });
   } catch (error) {
     return NextResponse.json({ error: String(error instanceof Error ? error.message : error) }, { status: 400 });

@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 export async function GET(req: Request, ctx: { params: Promise<{ roomId: string }> }) {
   try {
     const { roomId } = await ctx.params;
-    const room = assertRoom(roomId);
+    const room = await assertRoom(roomId);
 
     const url = new URL(req.url);
     const adminKey = url.searchParams.get("adminKey");
