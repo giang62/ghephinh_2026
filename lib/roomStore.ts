@@ -58,13 +58,56 @@ const DEFAULT_DURATION_SEC = 60;
 const DEFAULT_PUZZLE_IMAGE = "/puzzles/puzzle1.png";
 const ROOM_TTL_SEC = 6 * 60 * 60;
 
-function isVercelKvConfigured() {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+function isRedisUrlConfigured() {
+  return Boolean(process.env.REDIS_URL);
+}
+
+function isUpstashRestConfigured() {
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+  return Boolean(url && token);
+}
+
+function assertPersistentStoreIfOnVercel() {
+  if (!process.env.VERCEL) return;
+  if (!isRedisUrlConfigured() && !isUpstashRestConfigured()) {
+    throw new Error(
+      "Deploy Vercel cần Redis để lưu phòng. Hãy cấu hình REDIS_URL (Redis serverless) hoặc KV_REST_API_URL/KV_REST_API_TOKEN (Upstash REST / Vercel KV)."
+    );
+  }
+}
+
+type RedisClient = {
+  get: (key: string) => Promise<string | null>;
+  set: (key: string, value: string, opts?: { EX?: number }) => Promise<unknown>;
+};
+
+let redisPromise: Promise<RedisClient> | null = null;
+async function getRedisByUrl(): Promise<RedisClient | null> {
+  if (!isRedisUrlConfigured()) return null;
+  if (!redisPromise) {
+    redisPromise = import("redis").then(async (m) => {
+      const client = m.createClient({ url: process.env.REDIS_URL });
+      client.on("error", () => {});
+      await client.connect();
+      return client as unknown as RedisClient;
+    });
+  }
+  return redisPromise;
 }
 
 let kvPromise: Promise<any> | null = null;
-async function getKv() {
-  if (!isVercelKvConfigured()) return null;
+async function getUpstashRestKv() {
+  if (!isUpstashRestConfigured()) return null;
+
+  // @vercel/kv expects KV_* env vars; map from Upstash vars if needed.
+  if (!process.env.KV_REST_API_URL && process.env.UPSTASH_REDIS_REST_URL) {
+    process.env.KV_REST_API_URL = process.env.UPSTASH_REDIS_REST_URL;
+  }
+  if (!process.env.KV_REST_API_TOKEN && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    process.env.KV_REST_API_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+  }
+
   if (!kvPromise) kvPromise = import("@vercel/kv").then((m) => m.kv);
   return kvPromise;
 }
@@ -88,7 +131,18 @@ function roomKey(roomId: string) {
 }
 
 async function loadRoom(roomId: string): Promise<Room | null> {
-  const kv = await getKv();
+  const redis = await getRedisByUrl();
+  if (redis) {
+    const raw = await redis.get(roomKey(roomId));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as Room;
+    } catch {
+      return null;
+    }
+  }
+
+  const kv = await getUpstashRestKv();
   if (kv) {
     const raw = await kv.get(roomKey(roomId));
     if (typeof raw !== "string") return null;
@@ -98,15 +152,25 @@ async function loadRoom(roomId: string): Promise<Room | null> {
       return null;
     }
   }
+
   return getMemoryStore().rooms.get(roomId) ?? null;
 }
 
 async function saveRoom(room: Room): Promise<void> {
-  const kv = await getKv();
-  if (kv) {
-    await kv.set(roomKey(room.roomId), JSON.stringify(room), { ex: ROOM_TTL_SEC });
+  const raw = JSON.stringify(room);
+
+  const redis = await getRedisByUrl();
+  if (redis) {
+    await redis.set(roomKey(room.roomId), raw, { EX: ROOM_TTL_SEC });
     return;
   }
+
+  const kv = await getUpstashRestKv();
+  if (kv) {
+    await kv.set(roomKey(room.roomId), raw, { ex: ROOM_TTL_SEC });
+    return;
+  }
+
   getMemoryStore().rooms.set(room.roomId, room);
 }
 
@@ -145,6 +209,7 @@ export async function createRoom(args: {
   durationSec?: number;
   imageUrl?: string | null;
 }) {
+  assertPersistentStoreIfOnVercel();
   const roomId = randomId(6);
   const adminKey = randomId(12);
   const durationSec = clampDuration(args.durationSec ?? DEFAULT_DURATION_SEC);
@@ -178,8 +243,8 @@ export async function assertRoom(roomId: string): Promise<Room> {
   const room = await getRoom(roomId);
   if (room) return room;
 
-  if (process.env.VERCEL && !isVercelKvConfigured()) {
-    throw new Error("Không tìm thấy phòng. Deploy Vercel cần bật Vercel KV để lưu phòng.");
+  if (process.env.VERCEL && !isRedisUrlConfigured() && !isUpstashRestConfigured()) {
+    throw new Error("Không tìm thấy phòng. Deploy Vercel cần Redis để lưu phòng (Preview/Production đều cần).");
   }
   throw new Error("Không tìm thấy phòng");
 }
@@ -221,6 +286,7 @@ export async function adminStartRoom(args: { roomId: string; adminKey: string })
 }
 
 export async function joinRoom(args: { roomId: string; name: string }) {
+  assertPersistentStoreIfOnVercel();
   const room = await assertRoom(args.roomId);
   if (maybeEndRoom(room)) await saveRoom(room);
   if (room.status !== "lobby") throw new Error("Phòng đã bắt đầu");
@@ -243,6 +309,7 @@ export async function submitResult(args: {
   token: string;
   result: ImagePuzzleResult | ClickCounterResult;
 }) {
+  assertPersistentStoreIfOnVercel();
   const room = await assertRoom(args.roomId);
   if (maybeEndRoom(room)) await saveRoom(room);
 
