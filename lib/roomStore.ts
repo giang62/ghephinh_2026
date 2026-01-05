@@ -62,6 +62,13 @@ function isVercelKvConfigured() {
   return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 }
 
+function assertKvIfOnVercel() {
+  if (!process.env.VERCEL) return;
+  if (!isVercelKvConfigured()) {
+    throw new Error("Deploy Vercel cần bật Vercel KV để lưu phòng (thiếu KV_REST_API_URL/KV_REST_API_TOKEN).");
+  }
+}
+
 let kvPromise: Promise<any> | null = null;
 async function getKv() {
   if (!isVercelKvConfigured()) return null;
@@ -145,6 +152,7 @@ export async function createRoom(args: {
   durationSec?: number;
   imageUrl?: string | null;
 }) {
+  assertKvIfOnVercel();
   const roomId = randomId(6);
   const adminKey = randomId(12);
   const durationSec = clampDuration(args.durationSec ?? DEFAULT_DURATION_SEC);
@@ -179,7 +187,7 @@ export async function assertRoom(roomId: string): Promise<Room> {
   if (room) return room;
 
   if (process.env.VERCEL && !isVercelKvConfigured()) {
-    throw new Error("Không tìm thấy phòng. Deploy Vercel cần bật Vercel KV để lưu phòng.");
+    throw new Error("Không tìm thấy phòng. Deploy Vercel cần bật Vercel KV để lưu phòng (Preview/Production đều cần).");
   }
   throw new Error("Không tìm thấy phòng");
 }
@@ -221,6 +229,7 @@ export async function adminStartRoom(args: { roomId: string; adminKey: string })
 }
 
 export async function joinRoom(args: { roomId: string; name: string }) {
+  assertKvIfOnVercel();
   const room = await assertRoom(args.roomId);
   if (maybeEndRoom(room)) await saveRoom(room);
   if (room.status !== "lobby") throw new Error("Phòng đã bắt đầu");
@@ -243,6 +252,7 @@ export async function submitResult(args: {
   token: string;
   result: ImagePuzzleResult | ClickCounterResult;
 }) {
+  assertKvIfOnVercel();
   const room = await assertRoom(args.roomId);
   if (maybeEndRoom(room)) await saveRoom(room);
 
