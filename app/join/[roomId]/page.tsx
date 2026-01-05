@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { fetchJson } from "@/lib/client";
 import { Countdown } from "@/components/Countdown";
+import { PlayerGrid } from "@/components/ui/PlayerGrid";
 
 type PublicRoomView = {
   serverNowMs: number;
@@ -134,6 +135,13 @@ export default function JoinRoomPage() {
                     Về trang chủ
                   </Link>
                 </div>
+              ) : view?.status === "running" ? (
+                <div className="grid" style={{ gap: 10 }}>
+                  <div className="pill" style={{ color: "var(--warn)" }}>
+                    Trò chơi đã bắt đầu. Không thể tham gia mới lúc này.
+                  </div>
+                  <div className="subtitle">Nếu bạn đã tham gia từ trước, hãy mở lại trang Play từ thiết bị của bạn.</div>
+                </div>
               ) : (
                 <div className="grid" style={{ gap: 10 }}>
                   <div>
@@ -149,33 +157,17 @@ export default function JoinRoomPage() {
                   <button className="btn btnPrimary" onClick={onJoin} disabled={busy || !name.trim()}>
                     {busy ? "Đang tham gia…" : "Tham gia"}
                   </button>
-                  {view?.status === "running" ? (
-                    <div className="pill" style={{ color: "var(--warn)" }}>
-                      Game đã bắt đầu — bạn vẫn có thể vào, nhưng sẽ bị trễ.
-                    </div>
-                  ) : null}
                 </div>
               )}
             </div>
           </div>
 
           <div className="card">
-            <div className="grid" style={{ gap: 10 }}>
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 600 }}>Người chơi trong phòng</div>
-                <span className="pill">
-                  <span className="mono">{view?.players.length ?? 0}</span>
-                </span>
-              </div>
-              <div className="grid" style={{ gap: 8 }}>
-                {(view?.players ?? []).map((p) => (
-                  <div key={p.playerId} className="row" style={{ justifyContent: "space-between" }}>
-                    <span>{p.name}</span>
-                  </div>
-                ))}
-                {!view?.players.length ? <div className="subtitle">Chưa có ai tham gia.</div> : null}
-              </div>
-            </div>
+            <PlayerGrid
+              players={view?.players ?? []}
+              title={view?.status === "lobby" ? "Phòng chờ" : "Người chơi"}
+              subtitle={view?.status === "lobby" ? "Mọi người sẽ xuất hiện ở đây sau khi tham gia." : undefined}
+            />
           </div>
         </section>
       </div>

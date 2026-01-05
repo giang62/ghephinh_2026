@@ -7,8 +7,9 @@ import { fetchJson } from "@/lib/client";
 import { ImagePuzzleGame } from "@/components/games/ImagePuzzleGame";
 import { ClickCounterGame } from "@/components/games/ClickCounterGame";
 import { HeroTimer } from "@/components/ui/HeroTimer";
-import { RankBoard } from "@/components/ui/RankBoard";
 import { ToastStack, useToasts } from "@/components/ui/useToasts";
+import { PlayerGrid } from "@/components/ui/PlayerGrid";
+import { PodiumBoard } from "@/components/ui/PodiumBoard";
 import type { PublicLeaderboardEntry } from "@/lib/roomStore";
 
 type PublicRoomView = {
@@ -209,12 +210,12 @@ export default function PlayRoomPage() {
               <div className="grid" style={{ gap: 10 }}>
                 <div style={{ fontWeight: 700 }}>Đang chờ quản trò bắt đầu…</div>
                 <div className="subtitle">Giữ tab này mở. Game sẽ hiện tự động khi bắt đầu.</div>
-                <div className="row">
-                  <span className="pill">
-                    Đã tham gia <span className="mono">{view?.players.length ?? 0}</span>
-                  </span>
-                  {submitted ? <span className="pill">Đã nộp kết quả</span> : null}
-                </div>
+                <div className="divider" />
+                <PlayerGrid
+                  players={view?.players ?? []}
+                  title="Người chơi đang chờ"
+                  subtitle="Khi quản trò bấm Bắt đầu, game sẽ chạy ngay."
+                />
               </div>
             ) : view.gameId === "image-puzzle" ? (
               <ImagePuzzleGame
@@ -231,32 +232,37 @@ export default function PlayRoomPage() {
                 disabled={view.status !== "running" || submitted}
               />
             )}
+
+            {view?.status === "running" && submitted ? (
+              <div className="overlay">
+                <div className="overlayCard">
+                  <h3 className="bigTitle">Bạn đã nộp!</h3>
+                  <div className="subtitle" style={{ marginTop: 6 }}>
+                    Đang chờ người chơi khác… (game sẽ tự kết thúc khi mọi người hoàn thành hoặc hết giờ)
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </section>
 
-        {leaderboard && view?.status !== "lobby" ? (
+        {leaderboard && view?.status === "ended" ? (
           <section className="card">
             <div className="grid" style={{ gap: 10 }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 700 }}>
-                  {view?.status === "ended" ? "Kết quả cuối" : "Bảng xếp hạng (cập nhật)"}
-                </div>
+                <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em" }}>Kết quả cuối</div>
                 <span className="pill">
                   Đã nộp <span className="mono">{leaderboard.entries.filter((e) => e.submitted).length}</span>/
                   <span className="mono">{leaderboard.entries.length}</span>
                 </span>
               </div>
-              <RankBoard entries={leaderboard.entries} mePlayerId={player?.playerId ?? null} />
-              {view?.status === "ended" ? (
-                <div className="row" style={{ justifyContent: "space-between" }}>
-                  <span className="subtitle">
-                    {submitted ? "Bạn đã nộp kết quả." : "Bạn chưa nộp kết quả."}
-                  </span>
-                  <Link className="btn" href="/">
-                    Chơi game khác
-                  </Link>
-                </div>
-              ) : null}
+              <PodiumBoard entries={leaderboard.entries} />
+              <div className="row" style={{ justifyContent: "space-between" }}>
+                <span className="subtitle">{submitted ? "Bạn đã nộp kết quả." : "Bạn chưa nộp kết quả."}</span>
+                <Link className="btn" href="/">
+                  Chơi game khác
+                </Link>
+              </div>
             </div>
           </section>
         ) : null}
