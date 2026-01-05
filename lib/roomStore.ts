@@ -120,6 +120,17 @@ function maybeEndRoom(room: Room) {
   return false;
 }
 
+function maybeAutoEndIfAllSubmitted(room: Room) {
+  if (room.status !== "running") return false;
+  if (!room.players.length) return false;
+  if (room.results.length >= room.players.length) {
+    room.status = "ended";
+    room.endsAtMs = nowMs();
+    return true;
+  }
+  return false;
+}
+
 export function clampDuration(durationSec: number): number {
   if (!Number.isFinite(durationSec)) return DEFAULT_DURATION_SEC;
   return Math.max(10, Math.min(15 * 60, Math.round(durationSec)));
@@ -212,7 +223,7 @@ export async function adminStartRoom(args: { roomId: string; adminKey: string })
 export async function joinRoom(args: { roomId: string; name: string }) {
   const room = await assertRoom(args.roomId);
   if (maybeEndRoom(room)) await saveRoom(room);
-  if (room.status === "ended") throw new Error("Phòng đã kết thúc");
+  if (room.status !== "lobby") throw new Error("Phòng đã bắt đầu");
 
   const name = sanitizeName(args.name);
   if (!name) throw new Error("Vui lòng nhập tên");
@@ -253,6 +264,7 @@ export async function submitResult(args: {
   if (idx >= 0) room.results[idx] = record;
   else room.results.push(record);
 
+  maybeAutoEndIfAllSubmitted(room);
   await saveRoom(room);
   return room;
 }
@@ -350,10 +362,30 @@ export function getPublicLeaderboard(room: Room) {
             ? "Chưa nộp"
             : "—";
 
-    const rank = submitted ? idx + 1 : null;
+    const rank = idx + 1;
     return { playerId: row.playerId, name: row.name, submitted, label, rank };
   });
 
   return { ...snapshot, entries };
 }
 
+export async function adminEndRoom(args: { roomId: string; adminKey: string }) {
+  const room = await assertRoom(args.roomId);
+  assertAdmin(room, args.adminKey);
+  if (room.status !== "running") throw new Error("Phòng chưa bắt đầu");
+  room.status = "ended";
+  room.endsAtMs = nowMs();
+  await saveRoom(room);
+  return room;
+}
+
+export async function adminRestartRoom(args: { roomId: string; adminKey: string }) {
+  const room = await assertRoom(args.roomId);
+  assertAdmin(room, args.adminKey);
+  room.status = "lobby";
+  room.startedAtMs = null;
+  room.endsAtMs = null;
+  room.results = [];
+  await saveRoom(room);
+  return room;
+}

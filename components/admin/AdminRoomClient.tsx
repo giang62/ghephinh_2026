@@ -7,7 +7,9 @@ import { RoomQr } from "@/components/RoomQr";
 import { Countdown } from "@/components/Countdown";
 import { HeroTimer } from "@/components/ui/HeroTimer";
 import { ToastStack, useToasts } from "@/components/ui/useToasts";
-import type { PlayerResult } from "@/lib/roomStore";
+import { PlayerGrid } from "@/components/ui/PlayerGrid";
+import { PodiumBoard } from "@/components/ui/PodiumBoard";
+import type { PlayerResult, PublicLeaderboardEntry } from "@/lib/roomStore";
 
 type AdminRoomView = {
   serverNowMs: number;
@@ -119,6 +121,38 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
     }
   }
 
+  async function onEnd() {
+    if (!adminKey) return;
+    setBusy(true);
+    try {
+      await fetchJson(`/api/rooms/${roomId}/end`, {
+        method: "POST",
+        body: JSON.stringify({ adminKey })
+      });
+      push({ title: "Đã kết thúc lượt chơi", tone: "warn", ttlMs: 2200 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function onRestart() {
+    if (!adminKey) return;
+    setBusy(true);
+    try {
+      await fetchJson(`/api/rooms/${roomId}/restart`, {
+        method: "POST",
+        body: JSON.stringify({ adminKey })
+      });
+      push({ title: "Đã reset về phòng chờ", tone: "good", ttlMs: 2200 });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   const sortedBoard = useMemo(() => {
     if (!view) return [];
     const byPlayer = new Map(view.results.map((r) => [r.playerId, r]));
@@ -190,139 +224,151 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
                 durationSec={view.durationSec}
               />
             ) : null}
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <span className="pill">
+                Người chơi <span className="mono">{view.players.length}</span>
+              </span>
+              <span className="pill">
+                Đã nộp <span className="mono">{view.results.length}</span>
+              </span>
+            </div>
           </div>
         </section>
       ) : null}
 
-      <section className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <div className="card">
-          <div className="grid" style={{ gap: 12 }}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div className="grid" style={{ gap: 2 }}>
-                <div style={{ fontWeight: 600 }}>Tham gia</div>
-                <div className="subtitle mono" style={{ wordBreak: "break-all" }}>
-                  {joinUrl || "Đang tải…"}
-                </div>
-              </div>
-              <button className="btn" onClick={copyJoinLink} disabled={!joinUrl}>
-                Sao chép
-              </button>
-            </div>
-            <div className="row" style={{ justifyContent: "center" }}>
-              <RoomQr url={joinUrl} />
-            </div>
-          </div>
-        </div>
+      {view?.status === "lobby" ? (
+        <>
+          <section className="card" style={{ padding: 18 }}>
+            <PlayerGrid
+              players={view.players.map((p) => ({ playerId: p.playerId, name: p.name }))}
+              title="Phòng chờ"
+              subtitle="Người chơi tham gia bằng link/QR bên dưới"
+            />
+          </section>
 
-        <div className="card">
-          <div className="grid" style={{ gap: 12 }}>
-            <div style={{ fontWeight: 600 }}>Cài đặt phòng</div>
-
-            <div className="row" style={{ alignItems: "flex-end" }}>
-              <div>
-                <label className="label">Thời gian (giây)</label>
-                <input
-                  className="input"
-                  type="number"
-                  min={10}
-                  max={900}
-                  step={5}
-                  value={durationSec}
-                  disabled={view?.status !== "lobby"}
-                  onChange={(e) => setDurationSec(Number(e.target.value))}
-                />
-              </div>
-
-              {view?.gameId === "image-puzzle" ? (
-                <div style={{ flex: 1 }}>
-                  <label className="label">Ảnh ghép hình</label>
-                  <select
-                    className="input"
-                    value={imageUrl}
-                    disabled={view?.status !== "lobby"}
-                    onChange={(e) => setImageUrl(e.target.value)}
-                  >
-                    <option value="/puzzles/puzzle1.png">Ảnh 1</option>
-                    <option value="/puzzles/puzzle2.png">Ảnh 2</option>
-                  </select>
-                </div>
-              ) : null}
-            </div>
-
-            <div className="row">
-              <button className="btn" disabled={busy || view?.status !== "lobby"} onClick={onConfigure}>
-                Lưu cài đặt
-              </button>
-              <button className="btn btnPrimary" disabled={busy || view?.status !== "lobby"} onClick={onStart}>
-                Bắt đầu
-              </button>
-              {view?.status !== "lobby" ? <span className="pill">Đã khóa cài đặt</span> : null}
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <section className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
-        <div className="card">
-          <div className="grid" style={{ gap: 10 }}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div style={{ fontWeight: 600 }}>Người chơi</div>
-              <span className="pill">
-                Tổng <span className="mono">{view?.players.length ?? 0}</span>
-              </span>
-            </div>
-            <div className="grid" style={{ gap: 8 }}>
-              {(view?.players ?? []).map((p) => (
-                <div key={p.playerId} className="row" style={{ justifyContent: "space-between" }}>
-                  <span>{p.name}</span>
-                </div>
-              ))}
-              {!view?.players.length ? <div className="subtitle">Chưa có ai tham gia.</div> : null}
-            </div>
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="grid" style={{ gap: 10 }}>
-            <div className="row" style={{ justifyContent: "space-between" }}>
-              <div style={{ fontWeight: 600 }}>Bảng xếp hạng</div>
-              <span className="pill">
-                Đã nộp <span className="mono">{view?.results.length ?? 0}</span>
-              </span>
-            </div>
-
-            <div className="grid" style={{ gap: 8 }}>
-              {sortedBoard.map(({ player, result }, idx) => {
-                const label =
-                  view?.gameId === "click-counter"
-                    ? result?.result.type === "click-counter"
-                      ? `${result.result.score} lần`
-                      : view?.status === "ended"
-                        ? "Chưa nộp"
-                        : "—"
-                    : result?.result.type === "image-puzzle"
-                      ? result.result.solved
-                        ? `${Math.round((result.result.completedMs ?? 0) / 1000)}s`
-                        : "Chưa xong"
-                      : view?.status === "ended"
-                        ? "Chưa nộp"
-                        : "—";
-
-                return (
-                  <div key={player.playerId} className="row" style={{ justifyContent: "space-between" }}>
-                    <div className="row" style={{ gap: 10 }}>
-                      <span className="pill mono">#{idx + 1}</span>
-                      <span>{player.name}</span>
+          <section className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))" }}>
+            <div className="card">
+              <div className="grid" style={{ gap: 12 }}>
+                <div className="row" style={{ justifyContent: "space-between" }}>
+                  <div className="grid" style={{ gap: 2 }}>
+                    <div style={{ fontWeight: 800 }}>Tham gia</div>
+                    <div className="subtitle mono" style={{ wordBreak: "break-all" }}>
+                      {joinUrl || "Đang tải…"}
                     </div>
-                    <span className="pill mono">{label}</span>
                   </div>
-                );
-              })}
-              {!sortedBoard.length ? <div className="subtitle">Chưa có kết quả.</div> : null}
+                  <button className="btn" onClick={copyJoinLink} disabled={!joinUrl}>
+                    Sao chép
+                  </button>
+                </div>
+                <div className="row" style={{ justifyContent: "center" }}>
+                  <RoomQr url={joinUrl} />
+                </div>
+              </div>
+            </div>
+
+            <div className="card">
+              <div className="grid" style={{ gap: 12 }}>
+                <div style={{ fontWeight: 800 }}>Cài đặt & điều khiển</div>
+
+                <div className="row" style={{ alignItems: "flex-end" }}>
+                  <div>
+                    <label className="label">Thời gian (giây)</label>
+                    <input
+                      className="input"
+                      type="number"
+                      min={10}
+                      max={900}
+                      step={5}
+                      value={durationSec}
+                      onChange={(e) => setDurationSec(Number(e.target.value))}
+                    />
+                  </div>
+
+                  {view?.gameId === "image-puzzle" ? (
+                    <div style={{ flex: 1 }}>
+                      <label className="label">Ảnh ghép hình</label>
+                      <select className="input" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)}>
+                        <option value="/puzzles/puzzle1.png">Ảnh 1</option>
+                        <option value="/puzzles/puzzle2.png">Ảnh 2</option>
+                      </select>
+                    </div>
+                  ) : null}
+                </div>
+
+                <div className="row">
+                  <button className="btn" disabled={busy} onClick={onConfigure}>
+                    Lưu cài đặt
+                  </button>
+                  <button className="btn btnPrimary" disabled={busy} onClick={onStart}>
+                    Bắt đầu
+                  </button>
+                  <span className="pill">Tắt QR/link sau khi bắt đầu</span>
+                </div>
+              </div>
+            </div>
+          </section>
+        </>
+      ) : null}
+
+      {view?.status === "running" ? (
+        <section className="card">
+          <div className="grid" style={{ gap: 12 }}>
+            <div style={{ fontWeight: 800 }}>Đang chơi</div>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <span className="pill">
+                Đã nộp <span className="mono">{view.results.length}</span>/<span className="mono">{view.players.length}</span>
+              </span>
+              <button className="btn" disabled={busy} onClick={onEnd}>
+                Kết thúc lượt chơi
+              </button>
+            </div>
+            <div className="subtitle">
+              Lượt chơi sẽ tự kết thúc khi tất cả người chơi đã nộp kết quả hoặc khi hết giờ.
             </div>
           </div>
-        </div>
-      </section>
+        </section>
+      ) : null}
+
+      {view?.status === "ended" ? (
+        <section className="card">
+          <div className="grid" style={{ gap: 12 }}>
+            <div className="row" style={{ justifyContent: "space-between" }}>
+              <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em" }}>Bảng xếp hạng</div>
+              <button className="btn btnPrimary" disabled={busy} onClick={onRestart}>
+                Chơi lại (reset)
+              </button>
+            </div>
+            <PodiumBoard entries={getEntriesFromAdmin(view, sortedBoard)} />
+            <div className="subtitle">Bấm “Chơi lại” để quay về phòng chờ và bắt đầu lượt mới.</div>
+          </div>
+        </section>
+      ) : null}
     </>
   );
+}
+
+function getEntriesFromAdmin(
+  view: { players: { playerId: string; name: string }[]; results: PlayerResult[]; gameId: string; status: "lobby" | "running" | "ended" },
+  sortedBoard: { player: { playerId: string; name: string }; result: PlayerResult | null }[]
+) : PublicLeaderboardEntry[] {
+  // Convert existing computed order into PublicLeaderboardEntry-like objects.
+  return sortedBoard.map(({ player, result }, idx) => {
+    const submitted = Boolean(result);
+    const label =
+      view.gameId === "click-counter"
+        ? result?.result.type === "click-counter"
+          ? `${result.result.score} lần`
+          : view.status === "ended"
+            ? "Chưa nộp"
+            : "—"
+        : result?.result.type === "image-puzzle"
+          ? result.result.solved
+            ? `${Math.round((result.result.completedMs ?? 0) / 1000)}s`
+            : "Chưa xong"
+          : view.status === "ended"
+            ? "Chưa nộp"
+            : "—";
+
+    return { playerId: player.playerId, name: player.name, submitted, label, rank: idx + 1 };
+  });
 }
