@@ -59,19 +59,32 @@ const DEFAULT_PUZZLE_IMAGE = "/puzzles/puzzle1.png";
 const ROOM_TTL_SEC = 6 * 60 * 60;
 
 function isVercelKvConfigured() {
-  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+  const url = process.env.KV_REST_API_URL ?? process.env.UPSTASH_REDIS_REST_URL;
+  const token = process.env.KV_REST_API_TOKEN ?? process.env.UPSTASH_REDIS_REST_TOKEN;
+  return Boolean(url && token);
 }
 
 function assertKvIfOnVercel() {
   if (!process.env.VERCEL) return;
   if (!isVercelKvConfigured()) {
-    throw new Error("Deploy Vercel cần bật Vercel KV để lưu phòng (thiếu KV_REST_API_URL/KV_REST_API_TOKEN).");
+    throw new Error(
+      "Deploy Vercel cần Redis (Vercel KV hoặc Upstash). Thiếu env KV_REST_API_URL/KV_REST_API_TOKEN (hoặc UPSTASH_REDIS_REST_URL/UPSTASH_REDIS_REST_TOKEN)."
+    );
   }
 }
 
 let kvPromise: Promise<any> | null = null;
 async function getKv() {
   if (!isVercelKvConfigured()) return null;
+
+  // @vercel/kv expects KV_* env vars; map from Upstash vars if needed.
+  if (!process.env.KV_REST_API_URL && process.env.UPSTASH_REDIS_REST_URL) {
+    process.env.KV_REST_API_URL = process.env.UPSTASH_REDIS_REST_URL;
+  }
+  if (!process.env.KV_REST_API_TOKEN && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    process.env.KV_REST_API_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
+  }
+
   if (!kvPromise) kvPromise = import("@vercel/kv").then((m) => m.kv);
   return kvPromise;
 }
