@@ -13,7 +13,7 @@ export async function POST(req: Request) {
     const durationSec = typeof body.durationSec === "number" ? body.durationSec : undefined;
     const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl : undefined;
 
-    const created = createRoom({ gameId, durationSec, imageUrl });
+    const created = await createRoom({ gameId, durationSec, imageUrl });
     return NextResponse.json(created);
   } catch (error) {
     return NextResponse.json({ error: String(error instanceof Error ? error.message : error) }, { status: 400 });

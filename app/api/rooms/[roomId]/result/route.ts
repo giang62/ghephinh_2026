@@ -16,7 +16,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
     const token = typeof body.token === "string" ? body.token : "";
     const result = body.result as ImagePuzzleResult | ClickCounterResult;
 
-    const room = submitResult({ roomId, playerId, token, result });
+    const room = await submitResult({ roomId, playerId, token, result });
     return NextResponse.json({ room: getRoomSnapshot(room) });
   } catch (error) {
     return NextResponse.json({ error: String(error instanceof Error ? error.message : error) }, { status: 400 });
@@ -26,7 +26,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ roomId: string
 export async function GET(_req: Request, ctx: { params: Promise<{ roomId: string }> }) {
   try {
     const { roomId } = await ctx.params;
-    const room = assertRoom(roomId);
+    const room = await assertRoom(roomId);
     return NextResponse.json({ room: getRoomSnapshot(room) });
   } catch (error) {
     return NextResponse.json({ error: String(error instanceof Error ? error.message : error) }, { status: 400 });

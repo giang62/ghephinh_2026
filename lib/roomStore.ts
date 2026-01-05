@@ -46,23 +46,9 @@ export type Room = {
   startedAtMs: number | null;
   endsAtMs: number | null;
   imageUrl: string | null;
-  players: Map<string, Player>;
-  results: Map<string, PlayerResult>;
+  players: Player[];
+  results: PlayerResult[];
 };
-
-type Store = {
-  rooms: Map<string, Room>;
-};
-
-function getStore(): Store {
-  const globalWithStore = globalThis as typeof globalThis & {
-    __gameghephinhStore?: Store;
-  };
-  if (!globalWithStore.__gameghephinhStore) {
-    globalWithStore.__gameghephinhStore = { rooms: new Map() };
-  }
-  return globalWithStore.__gameghephinhStore;
-}
 
 function nowMs() {
   return Date.now();
@@ -70,21 +56,84 @@ function nowMs() {
 
 const DEFAULT_DURATION_SEC = 60;
 const DEFAULT_PUZZLE_IMAGE = "/puzzles/puzzle1.png";
+const ROOM_TTL_SEC = 6 * 60 * 60;
 
-function maybeEndRoom(room: Room) {
-  if (room.status !== "running") return;
-  if (!room.endsAtMs) return;
-  if (nowMs() >= room.endsAtMs) {
-    room.status = "ended";
-  }
+function isVercelKvConfigured() {
+  return Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
 }
 
-export function createRoom(args: {
+let kvPromise: Promise<any> | null = null;
+async function getKv() {
+  if (!isVercelKvConfigured()) return null;
+  if (!kvPromise) kvPromise = import("@vercel/kv").then((m) => m.kv);
+  return kvPromise;
+}
+
+type MemoryStore = {
+  rooms: Map<string, Room>;
+};
+
+function getMemoryStore(): MemoryStore {
+  const globalWithStore = globalThis as typeof globalThis & {
+    __gameghephinhMemoryStore?: MemoryStore;
+  };
+  if (!globalWithStore.__gameghephinhMemoryStore) {
+    globalWithStore.__gameghephinhMemoryStore = { rooms: new Map() };
+  }
+  return globalWithStore.__gameghephinhMemoryStore;
+}
+
+function roomKey(roomId: string) {
+  return `room:${roomId}`;
+}
+
+async function loadRoom(roomId: string): Promise<Room | null> {
+  const kv = await getKv();
+  if (kv) {
+    const raw = await kv.get(roomKey(roomId));
+    if (typeof raw !== "string") return null;
+    try {
+      return JSON.parse(raw) as Room;
+    } catch {
+      return null;
+    }
+  }
+  return getMemoryStore().rooms.get(roomId) ?? null;
+}
+
+async function saveRoom(room: Room): Promise<void> {
+  const kv = await getKv();
+  if (kv) {
+    await kv.set(roomKey(room.roomId), JSON.stringify(room), { ex: ROOM_TTL_SEC });
+    return;
+  }
+  getMemoryStore().rooms.set(room.roomId, room);
+}
+
+function maybeEndRoom(room: Room) {
+  if (room.status !== "running") return false;
+  if (!room.endsAtMs) return false;
+  if (nowMs() >= room.endsAtMs) {
+    room.status = "ended";
+    return true;
+  }
+  return false;
+}
+
+export function clampDuration(durationSec: number): number {
+  if (!Number.isFinite(durationSec)) return DEFAULT_DURATION_SEC;
+  return Math.max(10, Math.min(15 * 60, Math.round(durationSec)));
+}
+
+function sanitizeName(name: string) {
+  return name.trim().replace(/\s+/g, " ").slice(0, 24);
+}
+
+export async function createRoom(args: {
   gameId: GameId;
   durationSec?: number;
   imageUrl?: string | null;
 }) {
-  const store = getStore();
   const roomId = randomId(6);
   const adminKey = randomId(12);
   const durationSec = clampDuration(args.durationSec ?? DEFAULT_DURATION_SEC);
@@ -99,42 +148,42 @@ export function createRoom(args: {
     startedAtMs: null,
     endsAtMs: null,
     imageUrl: args.gameId === "image-puzzle" ? (args.imageUrl ?? DEFAULT_PUZZLE_IMAGE) : null,
-    players: new Map(),
-    results: new Map()
+    players: [],
+    results: []
   };
 
-  store.rooms.set(roomId, room);
+  await saveRoom(room);
   return { roomId, adminKey };
 }
 
-export function getRoom(roomId: string): Room | null {
-  const room = getStore().rooms.get(roomId) ?? null;
-  if (room) maybeEndRoom(room);
+export async function getRoom(roomId: string): Promise<Room | null> {
+  const room = await loadRoom(roomId);
+  if (!room) return null;
+  if (maybeEndRoom(room)) await saveRoom(room);
   return room;
 }
 
-export function assertRoom(roomId: string): Room {
-  const room = getRoom(roomId);
-  if (!room) throw new Error("Không tìm thấy phòng");
-  return room;
+export async function assertRoom(roomId: string): Promise<Room> {
+  const room = await getRoom(roomId);
+  if (room) return room;
+
+  if (process.env.VERCEL && !isVercelKvConfigured()) {
+    throw new Error("Không tìm thấy phòng. Deploy Vercel cần bật Vercel KV để lưu phòng.");
+  }
+  throw new Error("Không tìm thấy phòng");
 }
 
 export function assertAdmin(room: Room, adminKey: string) {
   if (!adminKey || adminKey !== room.adminKey) throw new Error("Không có quyền");
 }
 
-export function clampDuration(durationSec: number): number {
-  if (!Number.isFinite(durationSec)) return DEFAULT_DURATION_SEC;
-  return Math.max(10, Math.min(15 * 60, Math.round(durationSec)));
-}
-
-export function adminConfigureRoom(args: {
+export async function adminConfigureRoom(args: {
   roomId: string;
   adminKey: string;
   durationSec?: number;
   imageUrl?: string | null;
 }) {
-  const room = assertRoom(args.roomId);
+  const room = await assertRoom(args.roomId);
   assertAdmin(room, args.adminKey);
   if (room.status !== "lobby") throw new Error("Phòng đã bắt đầu");
 
@@ -143,24 +192,26 @@ export function adminConfigureRoom(args: {
     room.imageUrl = args.imageUrl ?? DEFAULT_PUZZLE_IMAGE;
   }
 
+  await saveRoom(room);
   return room;
 }
 
-export function adminStartRoom(args: { roomId: string; adminKey: string }) {
-  const room = assertRoom(args.roomId);
+export async function adminStartRoom(args: { roomId: string; adminKey: string }) {
+  const room = await assertRoom(args.roomId);
   assertAdmin(room, args.adminKey);
   if (room.status !== "lobby") throw new Error("Phòng đã bắt đầu");
 
   room.status = "running";
   room.startedAtMs = nowMs();
   room.endsAtMs = room.startedAtMs + room.durationSec * 1000;
-  room.results.clear();
+  room.results = [];
+  await saveRoom(room);
   return room;
 }
 
-export function joinRoom(args: { roomId: string; name: string }) {
-  const room = assertRoom(args.roomId);
-  maybeEndRoom(room);
+export async function joinRoom(args: { roomId: string; name: string }) {
+  const room = await assertRoom(args.roomId);
+  if (maybeEndRoom(room)) await saveRoom(room);
   if (room.status === "ended") throw new Error("Phòng đã kết thúc");
 
   const name = sanitizeName(args.name);
@@ -169,21 +220,22 @@ export function joinRoom(args: { roomId: string; name: string }) {
   const playerId = randomId(6);
   const token = randomId(12);
   const player: Player = { playerId, name, token, joinedAtMs: nowMs() };
-  room.players.set(playerId, player);
+  room.players.push(player);
+  await saveRoom(room);
 
   return { room, playerId, token };
 }
 
-export function submitResult(args: {
+export async function submitResult(args: {
   roomId: string;
   playerId: string;
   token: string;
   result: ImagePuzzleResult | ClickCounterResult;
 }) {
-  const room = assertRoom(args.roomId);
-  maybeEndRoom(room);
+  const room = await assertRoom(args.roomId);
+  if (maybeEndRoom(room)) await saveRoom(room);
 
-  const player = room.players.get(args.playerId);
+  const player = room.players.find((p) => p.playerId === args.playerId) ?? null;
   if (!player) throw new Error("Không tìm thấy người chơi");
   if (player.token !== args.token) throw new Error("Không có quyền");
 
@@ -197,7 +249,11 @@ export function submitResult(args: {
     result: normalized
   };
 
-  room.results.set(player.playerId, record);
+  const idx = room.results.findIndex((r) => r.playerId === player.playerId);
+  if (idx >= 0) room.results[idx] = record;
+  else room.results.push(record);
+
+  await saveRoom(room);
   return room;
 }
 
@@ -220,15 +276,9 @@ function normalizeResult(
   throw new Error("Game không hợp lệ");
 }
 
-function sanitizeName(name: string) {
-  return name.trim().replace(/\s+/g, " ").slice(0, 24);
-}
-
 export function getRoomSnapshot(room: Room) {
-  maybeEndRoom(room);
   const now = nowMs();
-  const remainingMs =
-    room.status === "running" && room.endsAtMs ? Math.max(0, room.endsAtMs - now) : 0;
+  const remainingMs = room.status === "running" && room.endsAtMs ? Math.max(0, room.endsAtMs - now) : 0;
 
   return {
     roomId: room.roomId,
@@ -244,17 +294,13 @@ export function getRoomSnapshot(room: Room) {
 
 export function getAdminView(room: Room) {
   const snapshot = getRoomSnapshot(room);
-  const players = [...room.players.values()].map((p) => ({
-    playerId: p.playerId,
-    name: p.name,
-    joinedAtMs: p.joinedAtMs
-  }));
-  const results = [...room.results.values()];
+  const players = room.players.map((p) => ({ playerId: p.playerId, name: p.name, joinedAtMs: p.joinedAtMs }));
+  const results = room.results;
   return { ...snapshot, players, results };
 }
 
 export function getPublicPlayers(room: Room) {
-  return [...room.players.values()].map((p) => ({ playerId: p.playerId, name: p.name }));
+  return room.players.map((p) => ({ playerId: p.playerId, name: p.name }));
 }
 
 export function parseGameId(value: unknown): GameId {
@@ -268,13 +314,8 @@ export function getPublicLeaderboard(room: Room) {
     return { ...snapshot, entries: [] as PublicLeaderboardEntry[] };
   }
 
-  const players = [...room.players.values()];
-  const resultsByPlayer = new Map(room.results);
-
-  const rows = players.map((p) => {
-    const r = resultsByPlayer.get(p.playerId) ?? null;
-    return { playerId: p.playerId, name: p.name, result: r?.result ?? null };
-  });
+  const resultsByPlayer = new Map(room.results.map((r) => [r.playerId, r.result]));
+  const rows = room.players.map((p) => ({ playerId: p.playerId, name: p.name, result: resultsByPlayer.get(p.playerId) ?? null }));
 
   const sorted =
     room.gameId === "click-counter"
@@ -315,3 +356,4 @@ export function getPublicLeaderboard(room: Room) {
 
   return { ...snapshot, entries };
 }
+
