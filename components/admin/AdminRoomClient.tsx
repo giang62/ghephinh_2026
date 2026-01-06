@@ -39,6 +39,11 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
   const { toasts, push } = useToasts();
   const [finalEntries, setFinalEntries] = useState<PublicLeaderboardEntry[] | null>(null);
 
+  const joinUrl = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return `${window.location.origin}/join/${roomId}`;
+  }, [roomId]);
+
   useEffect(() => {
     const stored = localStorage.getItem(`admin:${roomId}`) ?? "";
     const key = keyFromUrl || stored;
@@ -108,11 +113,6 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
       cancelled = true;
     };
   }, [roomId, view?.status]);
-
-  const joinUrl = useMemo(() => {
-    if (typeof window === "undefined") return "";
-    return `${window.location.origin}/join/${roomId}`;
-  }, [roomId]);
 
   async function copyJoinLink() {
     if (!joinUrl) return;
@@ -217,17 +217,26 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
     );
   }
 
-  const statusLabel = view?.status === "lobby" ? "Chờ" : view?.status === "running" ? "Đang chơi" : view?.status === "ended" ? "Kết thúc" : "";
+  const statusLabel =
+    view?.status === "lobby"
+      ? "Chờ"
+      : view?.status === "running"
+        ? "Đang chơi"
+        : view?.status === "ended"
+          ? "Kết thúc"
+          : "";
 
-  const progress = useMemo(() => {
-    if (!view) return { submittedAny: 0 };
-    const submittedAny = new Set(view.results.map((r) => r.playerId)).size;
-    return { submittedAny };
-  }, [view]);
+  const playerCount = view?.players.length ?? 0;
+  const doneCount = view && Number.isFinite(view.doneCount) ? view.doneCount : 0;
+  const submittedAny = view ? new Set(view.results.map((r) => r.playerId)).size : 0;
+
+  const safeStageCount = view && Number.isFinite(view.stageCount) && view.stageCount > 0 ? view.stageCount : 1;
+  const totalDurationSec = view ? Math.max(1, Number(view.durationSec) * safeStageCount) : 1;
 
   return (
     <>
       <ToastStack toasts={toasts} />
+
       {error ? (
         <section className="card">
           <div className="pill" style={{ color: "var(--bad)" }}>
@@ -256,21 +265,21 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
                 serverNowMs={view.serverNowMs}
                 startedAtMs={view.startedAtMs}
                 endsAtMs={view.endsAtMs}
-                durationSec={Math.max(1, view.durationSec * view.stageCount)}
+                durationSec={totalDurationSec}
               />
             ) : null}
 
             <div className="row" style={{ justifyContent: "space-between" }}>
               <span className="pill">
-                Người chơi <span className="mono">{view.players.length}</span>
+                Người chơi <span className="mono">{playerCount}</span>
               </span>
               {view.status === "running" ? (
                 <span className="pill">
-                  Đã xong <span className="mono">{view.doneCount}</span>/<span className="mono">{view.players.length}</span>
+                  Đã xong <span className="mono">{doneCount}</span>/<span className="mono">{playerCount}</span>
                 </span>
               ) : (
                 <span className="pill">
-                  Đã nộp <span className="mono">{progress.submittedAny}</span>
+                  Đã nộp <span className="mono">{submittedAny}</span>
                 </span>
               )}
             </div>
@@ -389,3 +398,4 @@ export function AdminRoomClient({ roomId, keyFromUrl }: { roomId: string; keyFro
     </>
   );
 }
+

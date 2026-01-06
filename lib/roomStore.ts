@@ -224,6 +224,98 @@ function stageImagesForGame(gameId: GameId) {
   return gameId === "image-puzzle" ? [...IMAGE_POOL] : [];
 }
 
+function ensureRoomDefaults(room: Room) {
+  let changed = false;
+
+  if (!Number.isFinite(room.durationSec)) {
+    room.durationSec = DEFAULT_DURATION_SEC;
+    changed = true;
+  }
+  room.durationSec = clampDuration(room.durationSec);
+
+  if (room.status !== "lobby" && room.status !== "running" && room.status !== "ended") {
+    room.status = "lobby";
+    changed = true;
+  }
+
+  const expectedStageCount = stageCountForGame(room.gameId);
+  if (!Number.isFinite(room.stageCount) || room.stageCount <= 0) {
+    room.stageCount = expectedStageCount;
+    changed = true;
+  }
+  if (room.gameId === "image-puzzle" && room.stageCount !== expectedStageCount) {
+    room.stageCount = expectedStageCount;
+    changed = true;
+  }
+
+  if (!Array.isArray(room.stageImages) || room.stageImages.some((x) => typeof x !== "string")) {
+    room.stageImages = stageImagesForGame(room.gameId);
+    changed = true;
+  }
+  if (room.gameId === "image-puzzle" && room.stageImages.length < IMAGE_PUZZLE_STAGE_COUNT) {
+    room.stageImages = stageImagesForGame(room.gameId);
+    changed = true;
+  }
+
+  if (!Array.isArray(room.players)) {
+    room.players = [];
+    changed = true;
+  }
+  if (!Array.isArray(room.results)) {
+    room.results = [];
+    changed = true;
+  }
+
+  if (!Number.isFinite(room.createdAtMs)) {
+    room.createdAtMs = nowMs();
+    changed = true;
+  }
+
+  if (room.startedAtMs !== null && !Number.isFinite(room.startedAtMs)) {
+    room.startedAtMs = null;
+    changed = true;
+  }
+  if (room.endsAtMs !== null && !Number.isFinite(room.endsAtMs)) {
+    room.endsAtMs = null;
+    changed = true;
+  }
+
+  if (room.adminLastSeenAtMs !== null && !Number.isFinite(room.adminLastSeenAtMs)) {
+    room.adminLastSeenAtMs = nowMs();
+    changed = true;
+  }
+  if (room.adminLastSeenAtMs === null) {
+    room.adminLastSeenAtMs = nowMs();
+    changed = true;
+  }
+
+  for (const r of room.results) {
+    if (!r || typeof r !== "object") continue;
+    if (r.result?.type === "image-puzzle") {
+      if (r.result.stageIndex !== 0 && r.result.stageIndex !== 1) {
+        r.result.stageIndex = 0;
+        changed = true;
+      }
+      if (!Number.isFinite(r.result.completedMs)) {
+        r.result.completedMs = 0;
+        changed = true;
+      }
+      if (r.result.solved !== true) {
+        r.result.solved = true;
+        changed = true;
+      }
+    }
+    if (r.result?.type === "click-counter") {
+      if (!Number.isFinite(r.result.score)) {
+        r.result.score = 0;
+        changed = true;
+      }
+    }
+  }
+
+  return changed;
+}
+
 function isAdminAbsent(room: Room) {
   if (!room.adminLastSeenAtMs) return false;
   return nowMs() - room.adminLastSeenAtMs > ADMIN_ABSENCE_TTL_MS;
@@ -313,12 +405,14 @@ export async function getRoom(roomId: string): Promise<Room | null> {
   const room = await loadRoom(roomId);
   if (!room) return null;
 
+  const normalized = ensureRoomDefaults(room);
+
   if (isAdminAbsent(room)) {
     await deleteRoom(roomId);
     return null;
   }
 
-  if (maybeEndRoom(room)) await saveRoom(room);
+  if (maybeEndRoom(room) || normalized) await saveRoom(room);
   return room;
 }
 
@@ -635,4 +729,3 @@ export function getPublicLeaderboard(room: Room) {
 
   return { ...snapshot, entries };
 }
-
