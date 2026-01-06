@@ -6,14 +6,12 @@ export async function POST(req: Request) {
     const body = (await req.json()) as {
       gameId?: unknown;
       durationSec?: unknown;
-      imageUrl?: unknown;
     };
 
     const gameId = parseGameId(body.gameId);
     const durationSec = typeof body.durationSec === "number" ? body.durationSec : undefined;
-    const imageUrl = typeof body.imageUrl === "string" ? body.imageUrl : undefined;
 
-    const created = await createRoom({ gameId, durationSec, imageUrl });
+    const created = await createRoom({ gameId, durationSec });
     return NextResponse.json(created);
   } catch (error) {
     return NextResponse.json({ error: String(error instanceof Error ? error.message : error) }, { status: 400 });

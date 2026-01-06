@@ -12,8 +12,9 @@ function medal(rank: number) {
 export function PodiumBoard({ entries }: { entries: PublicLeaderboardEntry[] }) {
   if (!entries.length) return <div className="subtitle">Chưa có kết quả.</div>;
 
-  const top = entries.slice(0, 3);
-  const rest = entries.slice(3);
+  const sorted = [...entries].sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0));
+  const top = sorted.slice(0, 3);
+  const rest = sorted.slice(3);
 
   const card = (e: PublicLeaderboardEntry, emphasis: "first" | "second" | "third") => {
     const bg =
@@ -56,17 +57,19 @@ export function PodiumBoard({ entries }: { entries: PublicLeaderboardEntry[] }) 
     );
   };
 
-  const first = top.find((e) => e.rank === 1) ?? top[0];
-  const second = top.find((e) => e.rank === 2) ?? top[1];
-  const third = top.find((e) => e.rank === 3) ?? top[2];
+  const first = top[0];
+  const second = top[1];
+  const third = top[2];
 
   return (
     <div className="grid" style={{ gap: 14 }}>
-      <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
-        {second ? card(second, "second") : null}
-        {first ? card(first, "first") : null}
-        {third ? card(third, "third") : null}
-      </div>
+      {first ? card(first, "first") : null}
+      {second || third ? (
+        <div className="grid" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 14 }}>
+          {second ? card(second, "second") : null}
+          {third ? card(third, "third") : null}
+        </div>
+      ) : null}
 
       {rest.length ? (
         <div className="grid" style={{ gap: 10 }}>

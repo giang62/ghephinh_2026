@@ -10,25 +10,34 @@ import { HeroTimer } from "@/components/ui/HeroTimer";
 import { ToastStack, useToasts } from "@/components/ui/useToasts";
 import { PlayerGrid } from "@/components/ui/PlayerGrid";
 import { PodiumBoard } from "@/components/ui/PodiumBoard";
+import { StageImagesResult } from "@/components/ui/StageImagesResult";
 import type { PublicLeaderboardEntry } from "@/lib/roomStore";
 
-type PublicRoomView = {
+type PlayerAuth = { playerId: string; token: string; name: string };
+
+type PlayerStageView = {
+  stageIndex: 0 | 1 | 2;
+  stageStartedAtMs: number | null;
+  stageEndsAtMs: number | null;
+  imageUrl: string | null;
+  submittedStages: number[];
+};
+
+type MeRoomView = {
   serverNowMs: number;
   roomId: string;
   gameId: "image-puzzle" | "click-counter";
   status: "lobby" | "running" | "ended";
   durationSec: number;
   startedAtMs: number | null;
-  stageIndex: number;
-  stageCount: number;
-  stageStartedAtMs: number | null;
   endsAtMs: number | null;
   remainingMs: number;
-  imageUrl: string | null;
+  stageCount: number;
+  stageImages: string[];
   players: { playerId: string; name: string }[];
+  me: PlayerStageView;
 };
 
-type PlayerAuth = { playerId: string; token: string; name: string };
 type LeaderboardResponse = {
   serverNowMs: number;
   roomId: string;
@@ -36,10 +45,10 @@ type LeaderboardResponse = {
   status: "lobby" | "running" | "ended";
   durationSec: number;
   startedAtMs: number | null;
-  stageIndex: number;
-  stageCount: number;
-  stageStartedAtMs: number | null;
   endsAtMs: number | null;
+  remainingMs: number;
+  stageCount: number;
+  stageImages: string[];
   entries: PublicLeaderboardEntry[];
 };
 
@@ -59,61 +68,81 @@ export default function PlayRoomPage() {
     }
   }, [roomId]);
 
-  const [view, setView] = useState<PublicRoomView | null>(null);
+  const [view, setView] = useState<MeRoomView | null>(null);
   const [error, setError] = useState("");
-  const [submittedStages, setSubmittedStages] = useState<number[]>([]);
   const [submitError, setSubmitError] = useState("");
   const { toasts, push } = useToasts();
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse | null>(null);
-  const submittedRef = useRef<Set<string>>(new Set());
+  const finishedToastRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     if (!player) router.replace(`/join/${roomId}`);
   }, [player, roomId, router]);
 
   useEffect(() => {
+    const p = player;
+    if (!p) return;
+    const playerId = p.playerId;
+    const token = p.token;
     let cancelled = false;
+
     async function tick() {
-      const next = await fetchJson<PublicRoomView>(`/api/rooms/${roomId}`);
+      const next = await fetchJson<MeRoomView>(`/api/rooms/${roomId}/me`, {
+        method: "POST",
+        body: JSON.stringify({ playerId, token })
+      });
       if (cancelled) return;
       setView(next);
       setError("");
     }
-    tick().catch((e) => setError(e instanceof Error ? e.message : String(e)));
+
+    tick().catch((e) => {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg);
+      if (msg.toLowerCase().includes("không tìm thấy phòng")) {
+        localStorage.removeItem(`player:${roomId}`);
+        router.replace(`/join/${roomId}`);
+      }
+    });
+
     const id = setInterval(() => tick().catch(() => {}), 750);
     return () => {
       cancelled = true;
       clearInterval(id);
     };
-  }, [roomId]);
+  }, [player, roomId, router]);
 
   useEffect(() => {
     if (!view) return;
-    if (view.status === "running") push({ title: "Bắt đầu", body: "Chúc bạn chơi vui.", tone: "info", ttlMs: 2000 });
+    if (view.status === "running") push({ title: "Bắt đầu!", body: "Chúc bạn chơi vui.", tone: "info", ttlMs: 2000 });
   }, [push, view?.startedAtMs, view?.status]);
 
   useEffect(() => {
-    if (!view) return;
-    if (view.status === "lobby") return;
+    const v = view;
+    if (!v) return;
+    if (v.status === "lobby") return;
+    const gameId = v.gameId;
+    const stageCount = v.stageCount;
     let cancelled = false;
+
+    function isFinishedEntry(entry: PublicLeaderboardEntry) {
+      if (gameId === "click-counter") return entry.submitted;
+      return entry.label.startsWith(`${stageCount}/${stageCount}`);
+    }
 
     async function tick() {
       const next = await fetchJson<LeaderboardResponse>(`/api/rooms/${roomId}/leaderboard`);
       if (cancelled) return;
 
-      const newlySubmitted = new Set<string>();
-      for (const e of next.entries) if (e.submitted) newlySubmitted.add(e.playerId);
-
-      for (const id of newlySubmitted) {
-        if (!submittedRef.current.has(id)) {
-          const who = next.entries.find((x) => x.playerId === id)?.name ?? "Ai đó";
-          if (!player || id !== player.playerId) {
-            push({ title: "Có người vừa hoàn thành", body: who, tone: "good", ttlMs: 2200 });
-          }
-        }
+      const finishedNow = new Set(next.entries.filter(isFinishedEntry).map((e) => e.playerId));
+      for (const id of finishedNow) {
+        if (finishedToastRef.current.has(id)) continue;
+        finishedToastRef.current.add(id);
+        if (player && id === player.playerId) continue;
+        const who = next.entries.find((x) => x.playerId === id)?.name ?? "Một người chơi";
+        push({ title: "Có người vừa hoàn thành!", body: who, tone: "good", ttlMs: 2200 });
       }
 
-      submittedRef.current = newlySubmitted;
       setLeaderboard(next);
     }
 
@@ -123,14 +152,16 @@ export default function PlayRoomPage() {
       cancelled = true;
       clearInterval(id);
     };
-  }, [player?.playerId, push, roomId, view?.status]);
+  }, [player, push, roomId, view]);
 
-  useEffect(() => {
-    if (!view?.startedAtMs) return;
-    setSubmittedStages([]);
-  }, [view?.startedAtMs]);
+  const submittedStages = view?.me.submittedStages ?? [];
+  const meInPlayers = player && view?.players.some((p) => p.playerId === player.playerId);
 
-  async function submitResult(result: { type: string; stageIndex: number; [k: string]: unknown }) {
+  async function submitResult(
+    result:
+      | { type: "image-puzzle"; stageIndex: number; solved: true; completedMs: number }
+      | { type: "click-counter"; stageIndex: number; score: number }
+  ) {
     if (!player) return;
     if (submittedStages.includes(result.stageIndex)) return;
     setSubmitError("");
@@ -139,51 +170,46 @@ export default function PlayRoomPage() {
         method: "POST",
         body: JSON.stringify({ playerId: player.playerId, token: player.token, result })
       });
-      setSubmittedStages((prev) => (prev.includes(result.stageIndex) ? prev : [...prev, result.stageIndex]));
-      push({ title: "Đã nộp kết quả", tone: "good", ttlMs: 2400 });
+      push({ title: "Đã nộp!", body: "Kết quả đã được ghi nhận.", tone: "good", ttlMs: 1800 });
     } catch (e) {
       setSubmitError(e instanceof Error ? e.message : String(e));
-      push({
-        title: "Nộp kết quả thất bại",
-        body: e instanceof Error ? e.message : String(e),
-        tone: "bad",
-        ttlMs: 2800
-      });
     }
   }
 
-  const meInPlayers = useMemo(() => {
-    if (!view || !player) return false;
-    return view.players.some((p) => p.playerId === player.playerId);
-  }, [player, view]);
+  const overlay = useMemo(() => {
+    if (!view || view.status !== "running") return null;
+    if (view.gameId === "click-counter") {
+      if (submittedStages.includes(0)) return { title: "Bạn đã nộp điểm!", body: "Đang chờ kết quả..." };
+      return null;
+    }
+
+    if (submittedStages.includes(1)) return { title: "Bạn đã hoàn thành!", body: "Đang chờ kết quả..." };
+    if (submittedStages.includes(0) && view.me.stageIndex === 0) return { title: "Tuyệt!", body: "Đang chuyển sang ảnh tiếp theo..." };
+    if (view.me.stageIndex === 2) return { title: "Hết giờ!", body: "Đang chờ kết quả..." };
+    return null;
+  }, [submittedStages, view]);
 
   return (
     <main className="container">
-      <ToastStack toasts={toasts} />
       <div className="grid" style={{ gap: 16 }}>
+        <ToastStack toasts={toasts} />
         <header className="row" style={{ justifyContent: "space-between" }}>
           <div className="grid" style={{ gap: 6 }}>
             <div className="row">
               <h1 className="title" style={{ margin: 0 }}>
-                Chơi · Phòng <span className="mono">{roomId}</span>
+                Phòng <span className="mono">{roomId}</span>
               </h1>
-            </div>
-            <div className="subtitle">
-              Người chơi <span className="mono">{player?.name ?? "…"}</span>
               {view ? (
-                <>
-                  {" "}
-                  · Game <span className="mono">{view.gameId === "image-puzzle" ? "Ghép hình" : "Đếm lượt bấm"}</span> ·{" "}
+                <span className="pill">
                   Trạng thái{" "}
-                  <span className="mono">
-                    {view.status === "lobby" ? "Chờ" : view.status === "running" ? "Đang chơi" : "Kết thúc"}
-                  </span>
-                </>
+                  <span className="mono">{view.status === "lobby" ? "Chờ" : view.status === "running" ? "Đang chơi" : "Kết thúc"}</span>
+                </span>
               ) : null}
             </div>
+            <div className="subtitle">Chơi game từ thiết bị của bạn.</div>
           </div>
-          <Link className="btn" href={`/join/${roomId}`}>
-            Thông tin phòng
+          <Link className="btn" href="/">
+            Danh sách game
           </Link>
         </header>
 
@@ -213,56 +239,72 @@ export default function PlayRoomPage() {
 
         <section className="card">
           <div className="grid" style={{ gap: 14, position: "relative" }}>
-            {view ? (
+            {view && view.status === "running" ? (
               <HeroTimer
                 serverNowMs={view.serverNowMs}
-                startedAtMs={view.stageStartedAtMs}
-                endsAtMs={view.endsAtMs}
+                startedAtMs={view.me.stageStartedAtMs}
+                endsAtMs={view.me.stageEndsAtMs}
                 durationSec={view.durationSec}
               />
             ) : null}
 
-            {view?.status === "running" && view.gameId === "image-puzzle" ? (
-              <div className="row" style={{ justifyContent: "center" }}>
-                <span className="pill">
-                  Màn <span className="mono">{view.stageIndex + 1}</span>/<span className="mono">{view.stageCount}</span>
-                </span>
-              </div>
-            ) : null}
-
             {!view || view.status === "lobby" ? (
-              <div className="grid" style={{ gap: 10 }}>
-                <div style={{ fontWeight: 700 }}>Đang chờ quản trò bắt đầu…</div>
-                <div className="subtitle">Giữ tab này mở. Game sẽ hiện tự động khi bắt đầu.</div>
-                <div className="divider" />
+              <div className="grid" style={{ gap: 14 }}>
+                <div className="row" style={{ justifyContent: "center" }}>
+                    <span className="pill" style={{ fontWeight: 900, fontSize: 16 }}>
+                    Đang chờ quản trò bắt đầu...
+                  </span>
+                </div>
                 <PlayerGrid
                   players={view?.players ?? []}
-                  title="Người chơi đang chờ"
-                  subtitle="Khi quản trò bấm Bắt đầu, game sẽ chạy ngay."
+                  title="Người chơi trong phòng"
+                  subtitle="Khi quản trò bấm Bắt đầu, game sẽ chạy ngay trên máy bạn."
+                  variant="focus"
                 />
               </div>
             ) : view.gameId === "image-puzzle" ? (
               <ImagePuzzleGame
-                key={`image-puzzle:${view.startedAtMs ?? "na"}:${view.stageIndex}`}
-                room={view as PublicRoomView & { gameId: "image-puzzle"; status: "running" | "ended" }}
+                key={`image-puzzle:${view.startedAtMs ?? "na"}:${view.me.stageIndex}`}
+                room={{
+                  serverNowMs: view.serverNowMs,
+                  roomId: view.roomId,
+                  gameId: "image-puzzle",
+                  status: view.status === "ended" ? "ended" : "running",
+                  startedAtMs: view.startedAtMs,
+                  stageIndex: view.me.stageIndex,
+                  stageStartedAtMs: view.me.stageStartedAtMs,
+                  stageEndsAtMs: view.me.stageEndsAtMs,
+                  imageUrl: view.me.imageUrl
+                }}
                 onSubmit={submitResult}
-                disabled={view.status !== "running" || submittedStages.includes(view.stageIndex)}
+                disabled={
+                  view.status !== "running" ||
+                  view.me.stageIndex === 2 ||
+                  submittedStages.includes(view.me.stageIndex)
+                }
               />
             ) : (
               <ClickCounterGame
                 key={`click-counter:${view.startedAtMs ?? "na"}`}
-                room={view as PublicRoomView & { gameId: "click-counter"; status: "running" | "ended" }}
+                room={{
+                  serverNowMs: view.serverNowMs,
+                  roomId: view.roomId,
+                  gameId: "click-counter",
+                  status: view.status === "ended" ? "ended" : "running",
+                  startedAtMs: view.startedAtMs,
+                  endsAtMs: view.endsAtMs
+                }}
                 onSubmit={submitResult}
                 disabled={view.status !== "running" || submittedStages.includes(0)}
               />
             )}
 
-            {view?.status === "running" && view && submittedStages.includes(view.stageIndex) ? (
+            {overlay ? (
               <div className="overlay">
                 <div className="overlayCard">
-                  <h3 className="bigTitle">Bạn đã nộp!</h3>
+                  <h3 className="bigTitle">{overlay.title}</h3>
                   <div className="subtitle" style={{ marginTop: 6 }}>
-                    Đang chờ chuyển màn / chờ người chơi khác… (hết giờ sẽ tự chuyển)
+                    {overlay.body}
                   </div>
                 </div>
               </div>
@@ -274,12 +316,22 @@ export default function PlayRoomPage() {
           <section className="card">
             <div className="grid" style={{ gap: 10 }}>
               <div className="row" style={{ justifyContent: "space-between" }}>
-                <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em" }}>Kết quả cuối</div>
+                <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em" }}>Kết quả</div>
                 <span className="pill">
-                  Đã nộp <span className="mono">{leaderboard.entries.filter((e) => e.submitted).length}</span>/
+                  Đã có <span className="mono">{leaderboard.entries.filter((e) => e.submitted).length}</span>/
                   <span className="mono">{leaderboard.entries.length}</span>
                 </span>
               </div>
+
+              {view.gameId === "image-puzzle" && view.stageImages.length >= 2 ? (
+                <StageImagesResult
+                  images={[
+                    { url: view.stageImages[0]!, label: "Vòng 1" },
+                    { url: view.stageImages[1]!, label: "Vòng 2" }
+                  ]}
+                />
+              ) : null}
+
               <PodiumBoard entries={leaderboard.entries} />
               <div className="row" style={{ justifyContent: "space-between" }}>
                 <span className="subtitle">{submittedStages.length ? "Bạn đã nộp kết quả." : "Bạn chưa nộp kết quả."}</span>

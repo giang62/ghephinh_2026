@@ -90,3 +90,4 @@ export function ClickCounterGame({ room, onSubmit, disabled }: Props) {
     </div>
   );
 }
+

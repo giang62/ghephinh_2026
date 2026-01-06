@@ -16,7 +16,8 @@ type PublicRoomView = {
   startedAtMs: number | null;
   endsAtMs: number | null;
   remainingMs: number;
-  imageUrl: string | null;
+  stageCount: number;
+  stageImages: string[];
   players: { playerId: string; name: string }[];
 };
 
@@ -67,7 +68,10 @@ export default function JoinRoomPage() {
         method: "POST",
         body: JSON.stringify({ name })
       });
-      localStorage.setItem(`player:${roomId}`, JSON.stringify({ playerId: joined.playerId, token: joined.token, name }));
+      localStorage.setItem(
+        `player:${roomId}`,
+        JSON.stringify({ playerId: joined.playerId, token: joined.token, name })
+      );
       router.push(`/play/${roomId}`);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -92,9 +96,7 @@ export default function JoinRoomPage() {
               {view ? (
                 <span className="pill">
                   Trạng thái{" "}
-                  <span className="mono">
-                    {view.status === "lobby" ? "Chờ" : view.status === "running" ? "Đang chơi" : "Kết thúc"}
-                  </span>
+                  <span className="mono">{view.status === "lobby" ? "Chờ" : view.status === "running" ? "Đang chơi" : "Kết thúc"}</span>
                 </span>
               ) : null}
               {view ? <Countdown endsAtMs={view.endsAtMs} serverNowMs={view.serverNowMs} /> : null}
@@ -102,7 +104,7 @@ export default function JoinRoomPage() {
             <div className="subtitle">Nhập tên của bạn để tham gia.</div>
           </div>
           <Link className="btn" href="/">
-            ← Danh sách game
+            Danh sách game
           </Link>
         </header>
 
@@ -129,7 +131,7 @@ export default function JoinRoomPage() {
               ) : view?.status === "ended" ? (
                 <div className="grid" style={{ gap: 10 }}>
                   <div className="pill" style={{ color: "var(--warn)" }}>
-                    Phòng đã kết thúc. Hãy tạo phòng mới để chơi tiếp.
+                    Phòng đã kết thúc hoặc đã đóng.
                   </div>
                   <Link className="btn btnPrimary" href="/">
                     Về trang chủ
@@ -140,7 +142,9 @@ export default function JoinRoomPage() {
                   <div className="pill" style={{ color: "var(--warn)" }}>
                     Trò chơi đã bắt đầu. Không thể tham gia mới lúc này.
                   </div>
-                  <div className="subtitle">Nếu bạn đã tham gia từ trước, hãy mở lại trang Play từ thiết bị của bạn.</div>
+                  <div className="subtitle">
+                    Nếu bạn đã tham gia từ trước, hãy mở lại trang Chơi trên thiết bị của bạn.
+                  </div>
                 </div>
               ) : (
                 <div className="grid" style={{ gap: 10 }}>
@@ -155,7 +159,7 @@ export default function JoinRoomPage() {
                     />
                   </div>
                   <button className="btn btnPrimary" onClick={onJoin} disabled={busy || !name.trim()}>
-                    {busy ? "Đang tham gia…" : "Tham gia"}
+                    {busy ? "Đang tham gia..." : "Tham gia"}
                   </button>
                 </div>
               )}
@@ -165,8 +169,9 @@ export default function JoinRoomPage() {
           <div className="card">
             <PlayerGrid
               players={view?.players ?? []}
-              title={view?.status === "lobby" ? "Phòng chờ" : "Người chơi"}
+              title={view?.status === "lobby" ? "Người chơi trong phòng" : "Người chơi"}
               subtitle={view?.status === "lobby" ? "Mọi người sẽ xuất hiện ở đây sau khi tham gia." : undefined}
+              variant={view?.status === "lobby" ? "focus" : "default"}
             />
           </div>
         </section>
@@ -174,3 +179,4 @@ export default function JoinRoomPage() {
     </main>
   );
 }
+

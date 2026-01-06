@@ -67,7 +67,7 @@ export function AdminCreateClient({ initialGameId }: { initialGameId: GameId }) 
 
         <div className="row">
           <button className="btn btnPrimary" onClick={onCreate} disabled={loading}>
-            {loading ? "Đang tạo…" : "Tạo phòng"}
+            {loading ? "Đang tạo..." : "Tạo phòng"}
           </button>
           <span className="pill">Người chơi tham gia bằng link/QR</span>
           <span className="pill">Bấm Bắt đầu khi sẵn sàng</span>
@@ -76,3 +76,4 @@ export function AdminCreateClient({ initialGameId }: { initialGameId: GameId }) 
     </section>
   );
 }
+

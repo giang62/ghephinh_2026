@@ -15,17 +15,20 @@ function colorFromName(name: string) {
 export function PlayerGrid({
   players,
   title,
-  subtitle
+  subtitle,
+  variant = "default"
 }: {
   players: { playerId: string; name: string }[];
   title: string;
   subtitle?: string;
+  variant?: "default" | "focus";
 }) {
+  const isFocus = variant === "focus";
   return (
     <div className="grid" style={{ gap: 12 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
         <div className="grid" style={{ gap: 2 }}>
-          <div style={{ fontWeight: 800 }}>{title}</div>
+          <div style={{ fontWeight: 900, fontSize: isFocus ? 20 : 16, letterSpacing: "-0.02em" }}>{title}</div>
           {subtitle ? <div className="subtitle">{subtitle}</div> : null}
         </div>
         <span className="pill">
@@ -36,7 +39,7 @@ export function PlayerGrid({
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))",
+          gridTemplateColumns: isFocus ? "repeat(auto-fit, minmax(220px, 1fr))" : "repeat(auto-fit, minmax(160px, 1fr))",
           gap: 12
         }}
       >
@@ -45,7 +48,7 @@ export function PlayerGrid({
             key={p.playerId}
             className="card"
             style={{
-              padding: 14,
+              padding: isFocus ? 18 : 14,
               borderRadius: 18,
               position: "relative",
               overflow: "hidden"
@@ -55,9 +58,9 @@ export function PlayerGrid({
               <div
                 className="mono"
                 style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 14,
+                  width: isFocus ? 54 : 44,
+                  height: isFocus ? 54 : 44,
+                  borderRadius: isFocus ? 18 : 14,
                   display: "grid",
                   placeItems: "center",
                   fontWeight: 900,
@@ -69,7 +72,7 @@ export function PlayerGrid({
               >
                 {initials(p.name)}
               </div>
-              <div style={{ fontWeight: 800, fontSize: 16, lineHeight: 1.2 }}>{p.name}</div>
+              <div style={{ fontWeight: 850, fontSize: isFocus ? 18 : 16, lineHeight: 1.2 }}>{p.name}</div>
             </div>
           </div>
         ))}

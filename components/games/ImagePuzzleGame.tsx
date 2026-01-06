@@ -9,17 +9,16 @@ type RoomView = {
   gameId: "image-puzzle";
   status: "running" | "ended";
   startedAtMs: number | null;
-  stageIndex: number;
-  stageCount: number;
+  stageIndex: 0 | 1 | 2;
   stageStartedAtMs: number | null;
-  endsAtMs: number | null;
+  stageEndsAtMs: number | null;
   imageUrl: string | null;
 };
 
 type Props = {
   room: RoomView;
   disabled: boolean;
-  onSubmit: (result: { type: "image-puzzle"; stageIndex: number; solved: boolean; completedMs: number | null }) => void;
+  onSubmit: (result: { type: "image-puzzle"; stageIndex: number; solved: true; completedMs: number }) => void;
 };
 
 const SIZE = 120;
@@ -47,8 +46,6 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
   const solved = solvedCount === GRID * GRID;
 
   const imageUrl = room.imageUrl ?? "/puzzles/puzzle1.png";
-  const overlay =
-    solved ? { title: "Bạn đã hoàn thành", body: "Đang gửi kết quả…" } : room.status === "ended" ? { title: "Hết giờ", body: "Bạn có thể xem bảng xếp hạng bên dưới." } : null;
 
   function nowServerMs() {
     return Date.now() + offsetMs;
@@ -56,6 +53,7 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
 
   function trySubmitSolved() {
     if (sentRef.current) return;
+    if (room.stageIndex !== 0 && room.stageIndex !== 1) return;
     if (!room.stageStartedAtMs) return;
     sentRef.current = true;
     const completedMs = Math.max(0, Math.round(nowServerMs() - room.stageStartedAtMs));
@@ -135,6 +133,17 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
     } as const;
   };
 
+  const hintStyle = {
+    width: 54,
+    height: 54,
+    borderRadius: 12,
+    border: "1px solid rgba(255,255,255,0.16)",
+    backgroundImage: `url(${imageUrl})`,
+    backgroundSize: "cover",
+    backgroundPosition: "center",
+    boxShadow: "0 10px 26px rgba(0,0,0,0.35)"
+  } as const;
+
   return (
     <div className="grid" style={{ gap: 14 }}>
       <div className="row" style={{ justifyContent: "space-between" }}>
@@ -145,38 +154,16 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
       </div>
 
       <div className="row" style={{ justifyContent: "space-between" }}>
-        <div className="subtitle">Kéo thả hoặc chạm: chọn mảnh → chọn ô.</div>
+        <div className="subtitle">Kéo thả hoặc chạm: chạm mảnh rồi chạm ô.</div>
         <div className="row" style={{ gap: 10 }}>
-          <span className="pill">Gợi ý:</span>
-          <div
-            style={{
-              width: 54,
-              height: 54,
-              borderRadius: 12,
-              border: "1px solid rgba(255,255,255,0.16)",
-              backgroundImage: `url(${imageUrl})`,
-              backgroundSize: "cover",
-              backgroundPosition: "center",
-              boxShadow: "0 10px 26px rgba(0,0,0,0.35)"
-            }}
-            aria-label="Ảnh gốc"
-            title="Ảnh gốc"
-          />
+          <span className="pill">Gợi ý</span>
+          <div style={hintStyle} aria-label="Ảnh gốc" title="Ảnh gốc" />
         </div>
       </div>
 
       <div className="row" style={{ gap: 18, alignItems: "flex-start", flexWrap: "wrap", position: "relative" }}>
         {solved ? <ConfettiBurst /> : null}
-        {overlay ? (
-          <div className="overlay">
-            <div className="overlayCard">
-              <h3 className="bigTitle">{overlay.title}</h3>
-              <div className="subtitle" style={{ marginTop: 6 }}>
-                {overlay.body}
-              </div>
-            </div>
-          </div>
-        ) : null}
+
         <div
           style={{
             display: "grid",
@@ -258,9 +245,8 @@ export function ImagePuzzleGame({ room, onSubmit, disabled }: Props) {
         </div>
       </div>
 
-      <div className="subtitle">
-        Mẹo: kéo thả trên điện thoại đôi khi không ổn định; dùng máy tính sẽ mượt hơn.
-      </div>
+      <div className="subtitle">Mẹo: chơi trên máy tính sẽ dễ hơn.</div>
     </div>
   );
 }
+
