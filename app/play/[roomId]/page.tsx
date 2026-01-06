@@ -261,6 +261,13 @@ export default function PlayRoomPage() {
                   variant="focus"
                 />
               </div>
+            ) : view.status === "ended" ? (
+              <div className="grid" style={{ gap: 10, placeItems: "center", padding: "6px 0" }}>
+                <div className="pill" style={{ fontWeight: 900, fontSize: 16 }}>
+                  Trò chơi đã kết thúc
+                </div>
+                <div className="subtitle">Xem bảng xếp hạng bên dưới.</div>
+              </div>
             ) : view.gameId === "image-puzzle" ? (
               <ImagePuzzleGame
                 key={`image-puzzle:${view.startedAtMs ?? "na"}:${view.me.stageIndex}`}
@@ -268,7 +275,7 @@ export default function PlayRoomPage() {
                   serverNowMs: view.serverNowMs,
                   roomId: view.roomId,
                   gameId: "image-puzzle",
-                  status: view.status === "ended" ? "ended" : "running",
+                  status: "running",
                   startedAtMs: view.startedAtMs,
                   stageIndex: view.me.stageIndex,
                   stageStartedAtMs: view.me.stageStartedAtMs,
@@ -277,7 +284,6 @@ export default function PlayRoomPage() {
                 }}
                 onSubmit={submitResult}
                 disabled={
-                  view.status !== "running" ||
                   view.me.stageIndex === 2 ||
                   submittedStages.includes(view.me.stageIndex)
                 }
@@ -289,12 +295,12 @@ export default function PlayRoomPage() {
                   serverNowMs: view.serverNowMs,
                   roomId: view.roomId,
                   gameId: "click-counter",
-                  status: view.status === "ended" ? "ended" : "running",
+                  status: "running",
                   startedAtMs: view.startedAtMs,
                   endsAtMs: view.endsAtMs
                 }}
                 onSubmit={submitResult}
-                disabled={view.status !== "running" || submittedStages.includes(0)}
+                disabled={submittedStages.includes(0)}
               />
             )}
 
