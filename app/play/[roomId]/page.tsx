@@ -10,7 +10,6 @@ import { HeroTimer } from "@/components/ui/HeroTimer";
 import { ToastStack, useToasts } from "@/components/ui/useToasts";
 import { PlayerGrid } from "@/components/ui/PlayerGrid";
 import { PodiumBoard } from "@/components/ui/PodiumBoard";
-import { StageImagesResult } from "@/components/ui/StageImagesResult";
 import type { PublicLeaderboardEntry } from "@/lib/roomStore";
 
 type PlayerAuth = { playerId: string; token: string; name: string };
@@ -322,15 +321,6 @@ export default function PlayRoomPage() {
                   <span className="mono">{leaderboard.entries.length}</span>
                 </span>
               </div>
-
-              {view.gameId === "image-puzzle" && view.stageImages.length >= 2 ? (
-                <StageImagesResult
-                  images={[
-                    { url: view.stageImages[0]!, label: "Vòng 1" },
-                    { url: view.stageImages[1]!, label: "Vòng 2" }
-                  ]}
-                />
-              ) : null}
 
               <PodiumBoard entries={leaderboard.entries} />
               <div className="row" style={{ justifyContent: "space-between" }}>

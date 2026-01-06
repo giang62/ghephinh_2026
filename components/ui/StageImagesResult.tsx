@@ -31,19 +31,30 @@ export function StageImagesResult({
               <div className="pill" style={{ width: "fit-content" }}>
                 {img.label}
               </div>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                alt={img.label}
-                src={img.url}
+              <div
                 style={{
                   width: "100%",
-                  height: 180,
-                  objectFit: "cover",
+                  aspectRatio: "1 / 1",
                   borderRadius: 14,
                   border: "1px solid rgba(255,255,255,0.12)",
-                  boxShadow: "0 18px 44px rgba(0,0,0,0.35)"
+                  background: "rgba(0,0,0,0.22)",
+                  boxShadow: "0 18px 44px rgba(0,0,0,0.35)",
+                  overflow: "hidden",
+                  display: "grid",
+                  placeItems: "center"
                 }}
-              />
+              >
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  alt={img.label}
+                  src={img.url}
+                  style={{
+                    width: "100%",
+                    height: "100%",
+                    objectFit: "contain"
+                  }}
+                />
+              </div>
             </div>
           </div>
         ))}
